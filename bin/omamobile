@@ -459,7 +459,9 @@ cmd_push() {
     say "${p}_b ($dev) written and verified"
   done
   say "Rebooting into the new images"
-  "$ssh" 'sync; (sleep 1; reboot-to omamobile) >/dev/null 2>&1 &' || true
+  # The Arch root has no reboot-to before the device package installs it
+  "$ssh" 'sync; if command -v reboot-to >/dev/null; then (sleep 1; reboot-to omamobile) >/dev/null 2>&1 &
+    else systemd-run --on-active=1 systemctl reboot >/dev/null; fi' || true
   sleep 15
   local i
   for i in $(seq 1 45); do
