@@ -231,16 +231,23 @@ cmd_initramfs() {
     done
   fi
   builtins=$(find "$CLANG_DIR/lib/clang" -name 'libclang_rt.builtins-aarch64-android.a' | head -1)
+  # reboot-to and omamobile-bootctl are the same on every gs101/gs201 Pixel; a
+  # device without its own package yet builds cheetah's copies
+  local csrc="$ROOT/packages/$DEV_PACKAGE/src"
+  if [[ ! -d $csrc ]]; then
+    csrc="$ROOT/packages/omamobile-device-cheetah/src"
+    say "No packages/$DEV_PACKAGE yet: building reboot-to and omamobile-bootctl from omamobile-device-cheetah"
+  fi
   "$CLANG_DIR/bin/clang" --target=aarch64-linux-musl --sysroot="$sysroot" -fuse-ld=lld -static -nostdlib -O2 \
     -o "$stage/usr/local/bin/devmem" "$sysroot/usr/lib/crt1.o" "$sysroot/usr/lib/crti.o" \
     "$ROOT/tools/devmem.c" -L"$sysroot/usr/lib" -lc "$builtins" "$sysroot/usr/lib/crtn.o"
   "$CLANG_DIR/bin/clang" --target=aarch64-linux-musl --sysroot="$sysroot" -fuse-ld=lld -static -nostdlib -O2 \
     -o "$stage/usr/local/bin/reboot-to" "$sysroot/usr/lib/crt1.o" "$sysroot/usr/lib/crti.o" \
-    "$ROOT/packages/$DEV_PACKAGE/src/reboot-to.c" -L"$sysroot/usr/lib" -lc "$builtins" "$sysroot/usr/lib/crtn.o"
+    "$csrc/reboot-to.c" -L"$sysroot/usr/lib" -lc "$builtins" "$sysroot/usr/lib/crtn.o"
   # A/B slot metadata in devinfo (Apache-2.0 port of Google's boot HAL). Not called by init yet.
   "$CLANG_DIR/bin/clang" --target=aarch64-linux-musl --sysroot="$sysroot" -fuse-ld=lld -static -nostdlib -O2 \
     -o "$stage/usr/local/bin/omamobile-bootctl" "$sysroot/usr/lib/crt1.o" "$sysroot/usr/lib/crti.o" \
-    "$ROOT/packages/$DEV_PACKAGE/src/omamobile-bootctl.c" -L"$sysroot/usr/lib" -lc "$builtins" "$sysroot/usr/lib/crtn.o"
+    "$csrc/omamobile-bootctl.c" -L"$sysroot/usr/lib" -lc "$builtins" "$sysroot/usr/lib/crtn.o"
   mkdir -p "$stage/root/.ssh"
   cat "$HOME"/.ssh/*.pub > "$stage/root/.ssh/authorized_keys"
   chmod 700 "$stage/root/.ssh" && chmod 600 "$stage/root/.ssh/authorized_keys"

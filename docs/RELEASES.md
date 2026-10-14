@@ -62,7 +62,7 @@ Bring-up tools (`*-stage`, `display-hz`, `usbc-deadman`) stay per plan: they pok
 | `NAME` | `Pixel 7 Pro` | Marketing name, for messages and bundle READMEs |
 | `SOC` | `gs201` | SoC family |
 | `COMPATIBLE` | `google,gs201-cheetah` | First DT root compatible; firmware names and the device check at install time use it |
-| `PACKAGE` | `omamobile-device-cheetah` | The device's package (and, for now, where the initramfs C helpers' sources live) |
+| `PACKAGE` | `omamobile-device-cheetah` | The device's package (and, for now, where the initramfs C helpers' sources live; a device without its package yet builds cheetah's copies) |
 | `DTB` | `exynos/google/gs201-cheetah.dtb` | Under `arch/arm64/boot/dts` in the kernel build, and under `dtbs/` in the kernel package |
 | `SOC_IDS` | `b0:0x9855001 a0:0x9855000` | `label:soc_id`. The first is what the DTB is built with; each other entry is a copy with `/soc_id` rewritten. Order is the order in `dtb.img` |
 | `DTBO_SOURCE` | `cheetah-m1-overlay.dts` | The board dtbo source beside the descriptor (GPL-2.0) |
