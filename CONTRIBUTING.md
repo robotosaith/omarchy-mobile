@@ -122,7 +122,7 @@ Bring-up steps hang phones. Plan for it before you start:
 bin/omamobile kernel           # Image, DTBs, modules into $KERNEL_OUT
 bin/omamobile modules          # stripped modules tarball for the Arch root
 bin/omamobile initramfs        # Alpine + dropbear + device/<codename>/initramfs/init
-bin/omamobile images           # boot, init_boot, vendor_boot, vendor_kernel_boot, dtbo
+bin/omamobile images           # the descriptor's BOOT_IMAGES: boot, init_boot, vendor_boot, vendor_kernel_boot, dtbo on cheetah
 
 # A first install: packages, root image, then the installer (phone in fastboot)
 tools/build-packages           # [omamobile] for aarch64 into out/repo, signed

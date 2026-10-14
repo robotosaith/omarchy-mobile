@@ -32,7 +32,7 @@ The audit behind this design (2026-10-13). "Step" names the roadmap step that re
 | `bin/omamobile images` | DTB path `gs201-cheetah.dtb`; `soc_id` 0x9855001 and the 0x9855000 rewrite; the `cheetah-m1-overlay.dts` dtbo and `--id=0x30306 --rev=0x10000`; the vendor cmdline (`earlycon` at gs201's UART); `--os_version`/`--os_patch_level`; the vendor page size | 1 (done) |
 | `bin/omamobile initramfs` | the init path `device/cheetah/initramfs/init`; the splash size 1440x3120; C sources from `packages/omamobile-device-cheetah/src` | 1 (done) |
 | `bin/omamobile capture` | the default capture name `cheetah-<date>` | 1 (done) |
-| `bin/omamobile push`, `flash` | the five slot-B images (Pixel 6 has no `init_boot` or `vendor_kernel_boot` [I], to check with `fastboot getvar all`); the partition lookup assumes the main LUN is `sda` | 1 (allowlist check done), 3 |
+| `bin/omamobile push`, `flash` | the partition lookup assumes the main LUN is `sda` (the image set now follows `BOOT_IMAGES`, the Pixel 6 layout included) | 1 (done), 3 |
 | `device/cheetah/initramfs/init` | `UFS_RW` (now checked against the descriptor at build time); the DECON `TRIG_CON` write `devmem 0x1c240030 0x3061` (gs201/cheetah only: **never on another phone**); the bring-up `probe()` register reads (watchdog, DPP); the USB product string "Pixel 7 Pro (M1)"; the main LUN `sda` | 2 |
 | `bin/omamobile initramfs` | the developer's `~/.ssh/*.pub` baked in as `authorized_keys` (fine for development, never for a release) | 2 |
 | `tools/extract-vendor-firmware` | `BOARD="google,gs201-cheetah"`, `DEVICE="cheetah"`, the firmware `MAP` | 4 |
@@ -68,9 +68,9 @@ Bring-up tools (`*-stage`, `display-hz`, `usbc-deadman`) stay per plan: they pok
 | `DTBO_SOURCE` | `cheetah-m1-overlay.dts` | The board dtbo source beside the descriptor (GPL-2.0) |
 | `DTBO_BOARD_ID`, `DTBO_BOARD_REV` | `0x30306`, `0x10000` | What ABL matches the dtbo entry on; checked against the source |
 | `VENDOR_CMDLINE` | `console=tty0 earlycon=exynos4210,0x10A00000 …` | `vendor_boot` command line (kernel arguments really go in `/chosen/bootargs`) |
-| `VENDOR_PAGESIZE` | `0x800` | Page size of `vendor_boot` and `vendor_kernel_boot` |
-| `OS_VERSION`, `OS_PATCH_LEVEL` | `17.0.0`, `2026-07` | The `init_boot` header values |
-| `BOOT_IMAGES` | `boot init_boot vendor_boot vendor_kernel_boot dtbo` | The images written to slot B (the `_b` suffix is added by the tools and is not configurable) |
+| `VENDOR_PAGESIZE` | `0x800` | Page size of `vendor_boot` (and `vendor_kernel_boot`, where there is one) |
+| `OS_VERSION`, `OS_PATCH_LEVEL` | `17.0.0`, `2026-07` | The `init_boot` header values, or `boot`'s on a phone without `init_boot` |
+| `BOOT_IMAGES` | `boot init_boot vendor_boot vendor_kernel_boot dtbo` | The images written to slot B (the `_b` suffix is added by the tools and is not configurable). `boot`, `vendor_boot` and `dtbo` are required. With `vendor_kernel_boot`, it carries the DTB and our initramfs and `vendor_boot` only the command line; without it (Pixel 6: `boot vendor_boot dtbo`), `vendor_boot` carries all three. `init_boot`, where there is one, is an empty ramdisk |
 | `UFS_RW` | `boot_b … dtbo_b userdata` | The storage guard's allowlist. Only `*_b` names and `userdata` are accepted, and every `BOOT_IMAGES` entry must be on it |
 | `INITRAMFS_INIT` | `initramfs/init` | The init script, relative to the descriptor |
 | `PANEL_SIZE` | `1440x3120` | Portrait panel size for the early splash |
@@ -104,7 +104,8 @@ What `bin/omamobile` checks, so a wrong descriptor fails the build rather than t
 - `UFS_RW` in the initramfs `init` is the descriptor's, byte for byte (until step 2 generates it);
 - the DTB really is built with the first `SOC_IDS` value, and each rewrite took;
 - the dtbo source carries `DTBO_BOARD_ID` and `DTBO_BOARD_REV`;
-- `push` and `flash` refuse any image whose `_b` partition is not on the allowlist.
+- `BOOT_IMAGES` names only known images and includes `boot`, `vendor_boot` and `dtbo`;
+- `push` and `flash` refuse any image whose `_b` partition is not on the allowlist, and `flash` checks every image exists before it writes any, and never activates slot B after a failed write.
 
 Step 1 changed no output for cheetah: `images` produced the same checksums for every file before and after, and `initramfs` staged an identical tree (§9).
 
