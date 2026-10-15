@@ -3,8 +3,8 @@
 
 Status (2026-10-14): **the Mali-G78 renders Omarchy through Panfrost**
 (GLES 3.1, Hyprland on top) and panfrost loads at boot. Kernel branch
-`omamobile-raven-gpu` (worktree `~/android/mainline/wt-raven`, output
-`~/android/mainline/out-raven`), `7.3.0-rc6-omamobile-push1-g4fd3f0dd1ecf`;
+`omamobile-gs101-gpu` (tested as the stacked bring-up branch,
+`7.3.0-rc6-omamobile-push1-g4fd3f0dd1ecf`);
 Mesa from `packages/mesa` with the G78 patch. No GPU DVFS yet, and PanVK
 refuses the G78.
 

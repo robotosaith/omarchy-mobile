@@ -3,10 +3,12 @@
 
 Status (2026-10-15): **M1 and M2 done: Omarchy with the mobile shell runs
 from slot B on our own kernel, from `userdata`, and slot B is marked
-successful at every boot.** Kernel branches `omamobile-raven-dts`, `-wifi`,
-`-gpu`, `-thermal`, `-display` and `-aoc` (stacked, worktree
-`~/android/mainline/wt-raven`, output `~/android/mainline/out-raven`), on
-top of `omamobile`. Slot A keeps an Android build (the fallback; on the
+successful at every boot.** Kernel branches `omamobile-gs101-boot`,
+`-touch`, `-gpu`, `-thermal`, `-power`, `-bluetooth`, `-wifi`, `-display`
+and `-aoc` on linux-omarchy-mobile, one subsystem each, all off
+`omamobile-gs101-boot` (which is off `omamobile`). They replace the stacked
+bring-up branches (`omamobile-raven-dts` ... `-aoc`) that the commit hashes
+in the results below come from. Slot A keeps an Android build (the fallback; on the
 reference phone GrapheneOS); slot B is ours. Later stages have their own
 plans: [GPU](GPU-PLAN.md), [Wi-Fi](WIFI-PLAN.md),
 [display](DISPLAY-PLAN.md), [Bluetooth](BLUETOOTH-PLAN.md),

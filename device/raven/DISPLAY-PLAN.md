@@ -8,7 +8,7 @@ D3-D3g was the panel rails: the simple-framebuffer node holds vci (ldo22m)
 and vddi (bucka), and removing simpledrm released them. Brightness and
 display off/on go through the S6E3HC3 driver (gs-dsim-cmd). Next: the
 panel's idle auto mode (down to 10 Hz on static content). Kernel branch
-`omamobile-raven-display`.
+`omamobile-gs101-display`.
 
 ## 1. Approach
 

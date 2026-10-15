@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT -->
 # Pixel 6 Pro (raven): AoC, speakers and microphones
 
-Status (2026-10-15): **R0 done; R1 set up on the phone, not yet run.** Kernel branch `omamobile-raven-aoc`
-(off `omamobile-raven-display`):
+Status (2026-10-15): **R0 done; R1 set up on the phone, not yet run.** Kernel branch `omamobile-gs101-aoc`
+(the hashes below are from the stacked bring-up branch it was split from):
 - cheetah's Trusty, GSA and AoC stack imported (`ce7ae89a5`, `fa0873edc`);
 - it builds against gs101's firmware interface (`9f5ed4b1f`, raven's
   `device/raven/kernel.config` sets `CONFIG_GOOGLE_AOC_GS101`);

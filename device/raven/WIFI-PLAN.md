@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT -->
 # Pixel 6 Pro (raven): Wi-Fi, then Bluetooth
 
-Status (2026-10-14): **Wi-Fi works and comes up at boot** (kernel `omamobile-raven-wifi`, `7.3.0-rc6-omamobile-push1-g57d2749dcfca`). Bluetooth: [BLUETOOTH-PLAN](BLUETOOTH-PLAN.md).
+Status (2026-10-14): **Wi-Fi works and comes up at boot** (kernel `7.3.0-rc6-omamobile-push1-g57d2749dcfca`; branch now `omamobile-gs101-wifi`). Bluetooth: [BLUETOOTH-PLAN](BLUETOOTH-PLAN.md).
 NetworkManager joins the owner's saved network (a root-only keyfile) and
 leaves `usb0` to systemd-networkd, whose route through the laptop is now
 the fallback.

@@ -2,10 +2,11 @@
 # Pixel 6 Pro (raven): power
 
 Status (2026-10-15): **idle drain with the screen off is about 460 mA on
-battery, down from 610 mA** (kernel `g25b76ccf7ce2`, branch
-`omamobile-raven-display`): MIF at 1014 MHz, 13 unused power domains off,
-DECON's trigger masked while dark. Cluster power-down is built behind
-`exynos_pmu.cpd` (default 0) and still needs a battery run. Open: Wi-Fi's
+battery, down from 610 mA** (kernel `g25b76ccf7ce2`, stacked
+bring-up branch; now `omamobile-gs101-power` and `-display`): MIF at
+1014 MHz, 13 unused power domains off, DECON's trigger masked while dark.
+Cluster power-down (`exynos_pmu.cpd`, default 0) was an experiment on the
+bring-up branch only and still needs a battery run. Open: Wi-Fi's
 PCIe L1 substates, runtime PM for the GPU, real suspend. Thermal zones
 work (section 3).
 
