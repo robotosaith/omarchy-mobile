@@ -20,6 +20,7 @@ The status of each phone, as verified on real hardware. What's still missing and
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Pixel 7 Pro | cheetah | gs201 (Tensor G2) | works | works | works (120 Hz) | works (DVFS) | works | works | works | works | works (audio) | works | testing | works | works | works | works | partial (quiet, thin) | works | WIP (boots; needs a SIM) | works | WIP (ultrawide works by hand) | WIP | works (opt-in) |
 | Pixel Fold | felix | gs201 (Tensor G2) | WIP ([#3](https://github.com/derekross/omarchy-mobile/issues/3)) | no | WIP (cover: simplefb console only) | no | no | no | works | no | no | no | no | no | no | no | no | no | no | no | no | no | no | no |
+| Pixel 6 Pro | raven | gs101 (Tensor) | works ([#2](https://github.com/derekross/omarchy-mobile/issues/2)) | works | works (120 Hz) | partial (no DVFS) | works | partial (power key; volume untested) | works | works | partial (scans; pairing untested) | works (gauge) | no | no | no | no | WIP | no | no | no | no | no | no | no |
 | *Template* | *codename* | *SoC* | | | | | | | | | | | | | | | | | | | | | | |
 
 ## cheetah (Pixel 7 Pro) in detail
@@ -60,7 +61,7 @@ Devices we'd like to support, with the closest starting point. Open an issue to 
 | Pixel Fold | felix | gs201 | **WIP, community port: [#3](https://github.com/derekross/omarchy-mobile/issues/3)**; as panther, with two panels (DECON1 drives the cover, DECON0 the inner panel) |
 | Pixel Tablet | tangorpro | gs201 | as panther; no modem |
 | Pixel 6 | oriole | gs101 | **WIP, community port: [#2](https://github.com/derekross/omarchy-mobile/issues/2)**; our preferred second device. Upstream mainline `gs101-oriole.dts` |
-| Pixel 6 Pro | raven | gs101 | upstream mainline `gs101-raven.dts`; shares oriole's port ([#2](https://github.com/derekross/omarchy-mobile/issues/2)) |
+| Pixel 6 Pro | raven | gs101 | **WIP, community port** ([#2](https://github.com/derekross/omarchy-mobile/issues/2)): Omarchy with the mobile shell runs; see the matrix and [device/raven](../device/raven/NOTES.md) |
 | Pixel 6a | bluejay | gs101 | upstream `gs101.dtsi`; a new board DTS; shares oriole's port ([#2](https://github.com/derekross/omarchy-mobile/issues/2)) |
 | Pixel 8, 8 Pro, 8a | shiba, husky, akita | zuma (Tensor G3) | **8a (akita): hardware and help offered, [#1](https://github.com/derekross/omarchy-mobile/issues/1)**; a new SoC for us, a longer road than gs101 |
 | Pixel 9 family | tokay, caiman, komodo, comet, tegu | zumapro (Tensor G4) | not started |
