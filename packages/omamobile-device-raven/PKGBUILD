@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+pkgname=omamobile-device-raven
+pkgver=$(cat "${startdir:-.}/version")
+pkgrel=1
+pkgdesc="Omarchy Mobile support for the Google Pixel 6 Pro (raven): boot-slot success, USB rescue, display, power and module policy"
+arch=(aarch64)
+url="https://github.com/derekross/omarchy-mobile"
+license=(MIT Apache-2.0)
+depends=(bash systemd util-linux)
+makedepends=(gcc)
+
+build() {
+  "$startdir/build" "$srcdir/build"
+}
+
+package() {
+  "$startdir/install" "$pkgdir" "$srcdir/build"
+}
