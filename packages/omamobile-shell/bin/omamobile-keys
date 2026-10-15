@@ -52,18 +52,38 @@ screensaver_up() {
   pgrep -f '[o]rg.omarchy.screensaver' >/dev/null
 }
 
-# The panel is off when its backlight's bl_power says so (4); without one,
-# ask Hyprland whether the display is powered.
 # Light the locked display like a touch on the lock screen would, so its
-# blank timer runs again (patches/omarchy/0009); plain "on" otherwise.
+# blank timer runs again (patches/omarchy/0009), and turn it on ourselves too.
 wake_locked() {
-  [[ $(omarchy-shell lock wake 2>/dev/null) == "ok" ]] || omarchy-brightness-display on
+  omarchy-shell lock wake >/dev/null 2>&1
+  # The lock's wake runs Omarchy's in the background; light it here too, so
+  # the press works even when that call fails (on is a no-op when lit).
+  omarchy-brightness-display on
+  restore_level
 }
 
+# Brightness put aside by the dark lock below, for a wake that finds it at 0
+# (the put-back after locking can be lost when presses come quickly).
+restore_level() {
+  local device level
+  [[ -f $state/level ]] || return 0
+  level=$(<"$state/level")
+  rm -f "$state/level"
+  device=$(omarchy-hw-display 2>/dev/null) || return 0
+  [[ $(brightnessctl -d "$device" get 2>/dev/null) == 0 && $level -gt 0 ]] &&
+    brightnessctl -q -d "$device" set "$level"
+  return 0
+}
+
+# The panel is off when its backlight's bl_power says so (4); without one,
+# ask Hyprland whether the display is powered.
 screen_off() {
   local device
   device=$(omarchy-hw-display 2>/dev/null)
-  if [[ -n $device && -r /sys/class/backlight/$device/bl_power ]]; then
+  # Only where this user may also write it: a readable bl_power that Omarchy
+  # can't switch stays 0 while the display is off, and the wake press would
+  # then turn it off again.
+  if [[ -n $device && -w /sys/class/backlight/$device/bl_power ]]; then
     [[ $(</sys/class/backlight/"$device"/bl_power) != 0 ]]
   else
     ! hyprctl monitors -j 2>/dev/null | jq -e 'all(.dpmsStatus)' >/dev/null
@@ -113,6 +133,7 @@ short_press() {
     device=$(omarchy-hw-display 2>/dev/null)
     if [[ -n $device ]]; then
       level=$(brightnessctl -d "$device" get 2>/dev/null)
+      [[ -n $level && $level != 0 ]] && echo "$level" >"$state/level"
       brightnessctl -q -d "$device" set 0
     fi
     omarchy-system-lock
@@ -121,7 +142,8 @@ short_press() {
       sleep 0.1
     done
     omarchy-brightness-display off
-    [[ -n $level ]] && brightnessctl -q -d "$device" set "$level"
+    [[ -n $level && $level != 0 ]] &&
+      brightnessctl -q -d "$device" set "$level" && rm -f "$state/level"
   fi
 }
 
@@ -176,6 +198,10 @@ case "${1:-}" in
     fi
     ;;
   power-up)
+    # Released: clear the held marker first. short_press can take seconds
+    # (it waits for the lock), and the long-press timer still running from
+    # power-down would otherwise see the key as held and open the menu too.
+    rm -f "$state/power"
     if [[ -f $state/chord ]]; then
       rm -f "$state/chord"
     elif [[ -f $state/long ]]; then
@@ -183,7 +209,6 @@ case "${1:-}" in
     else
       short_press
     fi
-    rm -f "$state/power"
     ;;
   *)
     echo "Usage: omamobile-keys power-down|power-up|volume-down|volume-up" >&2

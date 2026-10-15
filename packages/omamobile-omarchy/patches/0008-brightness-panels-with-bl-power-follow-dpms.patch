@@ -1,14 +1,15 @@
 # Brightness: panels whose backlight driver can power them down follow DPMS
 # through bl_power (4 off, 0 on): on the phone, DPMS alone doesn't reach a
 # panel run from the bootloader's framebuffer. Only where the user may write
-# bl_power (the device package's udev rule).
+# bl_power (the device package's udev rule). Touchscreens whose "inhibited"
+# the user may write follow it, so a dark screen ignores touch.
 #
 # Against Omarchy 4.0.4 (edge 4.0.4-2; tag v4.0.4).
 diff --git i/bin/omarchy-brightness-display w/bin/omarchy-brightness-display
 index 5a3e534..3c754bb 100755
 --- i/bin/omarchy-brightness-display
 +++ w/bin/omarchy-brightness-display
-@@ -82,12 +82,26 @@ if (( $# == 0 )); then
+@@ -82,12 +82,32 @@ if (( $# == 0 )); then
    exit
  fi
  
@@ -20,6 +21,12 @@ index 5a3e534..3c754bb 100755
 +  device="$(omarchy-hw-display 2>/dev/null)" || return 0
 +  bl="${OMARCHY_BACKLIGHT_PATH:-/sys/class/backlight}/$device/bl_power"
 +  [[ -w $bl ]] && echo "$1" >"$bl" 2>/dev/null
++  # Touchscreens the device lets this user switch follow the panel: a dark
++  # screen ignores touch, and only a key wakes it.
++  local input
++  for input in /sys/class/input/input*/inhibited; do
++    [[ -w $input ]] && echo "$(($1 != 0))" >"$input" 2>/dev/null
++  done
 +  return 0
 +}
 +
