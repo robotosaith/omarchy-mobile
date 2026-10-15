@@ -76,6 +76,8 @@ Bring-up tools (`*-stage`, `display-hz`, `usbc-deadman`) stay per plan: they pok
 | `INITRAMFS_MODULES` | (unset) | Optional: kernel modules the initramfs carries in `/lib/modules/omamobile/`, listed in load order in `/lib/modules/omamobile/order`, from the kernel build's `modules_install` (`omamobile modules` first). The device's init loads them before anything else. For drivers the boot needs before the Arch root, such as the PMIC rails a `simple-framebuffer` waits for |
 | `PANEL_SIZE` | `1440x3120` | Portrait panel size for the early splash |
 
+A descriptor directory may also hold `kernel.config`, a config fragment that `omamobile kernel` merges after `kernel/configs/omamobile.config`, for options that would break another device (gs101's AoC interface, which excludes gs201's). It is for bring-up only: the release kernel (§4) is one build for every device, so an option stays there until its driver handles both SoCs and the line moves to the shared fragment.
+
 ### 3.2 Keys to add later
 
 | Key | Step | Meaning |

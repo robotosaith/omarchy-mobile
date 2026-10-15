@@ -132,6 +132,10 @@ cmd_kernel() {
     set -e
     make ARCH=arm64 LLVM=1 O=$KERNEL_OUT defconfig
     scripts/kconfig/merge_config.sh -m -O $KERNEL_OUT $KERNEL_OUT/.config $ROOT/kernel/configs/omamobile.config
+    # The device's own options on top, where they would break another device
+    if [ -f $ROOT/device/$DEVICE/kernel.config ]; then
+      scripts/kconfig/merge_config.sh -m -O $KERNEL_OUT $KERNEL_OUT/.config $ROOT/device/$DEVICE/kernel.config
+    fi
     make ARCH=arm64 LLVM=1 O=$KERNEL_OUT olddefconfig
     make ARCH=arm64 LLVM=1 O=$KERNEL_OUT -j$JOBS Image.gz dtbs modules
     ls -lh $KERNEL_OUT/arch/arm64/boot/Image.gz
