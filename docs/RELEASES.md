@@ -73,6 +73,7 @@ Bring-up tools (`*-stage`, `display-hz`, `usbc-deadman`) stay per plan: they pok
 | `BOOT_IMAGES` | `boot init_boot vendor_boot vendor_kernel_boot dtbo` | The images written to slot B (the `_b` suffix is added by the tools and is not configurable). `boot`, `vendor_boot` and `dtbo` are required. With `vendor_kernel_boot`, it carries the DTB and our initramfs and `vendor_boot` only the command line; without it (Pixel 6: `boot vendor_boot dtbo`), `vendor_boot` carries all three. `init_boot`, where there is one, is an empty ramdisk |
 | `UFS_RW` | `boot_b … dtbo_b userdata` | The storage guard's allowlist. Only `*_b` names and `userdata` are accepted, and every `BOOT_IMAGES` entry must be on it |
 | `INITRAMFS_INIT` | `initramfs/init` | The init script, relative to the descriptor |
+| `INITRAMFS_MODULES` | (unset) | Optional: kernel modules the initramfs carries in `/lib/modules/omamobile/`, listed in load order in `/lib/modules/omamobile/order`, from the kernel build's `modules_install` (`omamobile modules` first). The device's init loads them before anything else. For drivers the boot needs before the Arch root, such as the PMIC rails a `simple-framebuffer` waits for |
 | `PANEL_SIZE` | `1440x3120` | Portrait panel size for the early splash |
 
 ### 3.2 Keys to add later
