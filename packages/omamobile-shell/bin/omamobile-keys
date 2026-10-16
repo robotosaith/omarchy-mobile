@@ -54,6 +54,21 @@ screensaver_up() {
 
 # Light the locked display like a touch on the lock screen would, so its
 # blank timer runs again (patches/omarchy/0009), and turn it on ourselves too.
+# Light the panel at once, the way Omarchy's "on" does in the end (the
+# backlight's bl_power, the touchscreen, DPMS), without its lookups: each
+# helper costs some 60 ms on a phone, and a wake ran a chain of them before
+# anything lit. wake_locked follows, and its "on" then finds the panel lit.
+light_now() {
+  local device input
+  device=$(cat "$state/panel-device" 2>/dev/null)
+  [[ -n $device && -w /sys/class/backlight/$device/bl_power ]] &&
+    echo 0 >"/sys/class/backlight/$device/bl_power" 2>/dev/null
+  for input in /sys/class/input/input*/inhibited; do
+    [[ -w $input ]] && echo 0 >"$input" 2>/dev/null
+  done
+  hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1
+}
+
 wake_locked() {
   omarchy-shell lock wake >/dev/null 2>&1
   # The lock's wake runs Omarchy's in the background; light it here too, so
@@ -80,6 +95,8 @@ restore_level() {
 screen_off() {
   local device
   device=$(omarchy-hw-display 2>/dev/null)
+  # Kept for light_now, so a wake doesn't have to look it up again.
+  echo "$device" >"$state/panel-device"
   # Only where this user may also write it: a readable bl_power that Omarchy
   # can't switch stays 0 while the display is off, and the wake press would
   # then turn it off again.
@@ -213,6 +230,9 @@ case "${1:-}" in
     elif [[ -f $state/long ]]; then
       rm -f "$state/long"
     else
+      # A press on a dark panel is a wake whatever else follows: light it
+      # first, then work out the rest (the lock check alone costs 60 ms).
+      [[ $(cat "$state/power-panel" 2>/dev/null) == off ]] && ! screensaver_up && light_now
       short_press
     fi
     rm -f "$state/power-panel"

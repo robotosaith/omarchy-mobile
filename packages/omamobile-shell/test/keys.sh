@@ -12,7 +12,9 @@ mkdir -p "$t/bin" "$t/run"
 log=$t/calls
 cat >"$t/bin/hyprctl" <<STUB
 #!/bin/bash
-if [[ \$1 == monitors ]]; then
+if [[ \$1 == dispatch ]]; then
+  echo "dpms enable" >>"$log"
+elif [[ \$1 == monitors ]]; then
   printf '[{"dpmsStatus": %s}]\n' "\$(cat "$t/dpms")"
 else
   printf '{"class": "%s"}\n' "\$(cat "$t/class")"
@@ -84,7 +86,7 @@ reset; keys power-down; keys power-up
 echo true >"$t/locked"; echo false >"$t/dpms"; echo 1 >"$t/wakerc"; echo 0 >"$t/level"
 reset; mkdir -p "$t/run/omamobile-keys"; echo 120 >"$t/run/omamobile-keys/level"
 keys power-down; keys power-up
-[[ $(cat "$log" | tr '\n' ' ') == "lock wake display on brightness 120 " ]] || fail "power wakes the locked display with its brightness"
+[[ $(cat "$log" | tr '\n' ' ') == "dpms enable lock wake display on brightness 120 " ]] || fail "power wakes the locked display with its brightness"
 
 # Power, short, locked with the display on: off
 echo true >"$t/dpms"; echo 0 >"$t/wakerc"
@@ -94,6 +96,6 @@ reset; keys power-down; keys power-up
 # the release (after Omarchy's lock blanked it): still a wake, never off
 echo false >"$t/dpms"; echo 0 >"$t/wakerc"
 reset; keys power-down; echo true >"$t/dpms"; keys power-up
-[[ $(cat "$log" | tr '\n' ' ') == "lock wake display on " ]] || fail "power wakes a display that was off at the press"
+[[ $(cat "$log" | tr '\n' ' ') == "dpms enable lock wake display on " ]] || fail "power wakes a display that was off at the press"
 [[ -e $t/run/omamobile-keys/power-panel ]] && fail "the release forgets the press's panel state"
 echo "ok - power key: locks dark, wakes lit with the brightness back"
