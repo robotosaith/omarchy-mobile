@@ -90,4 +90,10 @@ keys power-down; keys power-up
 echo true >"$t/dpms"; echo 0 >"$t/wakerc"
 reset; keys power-down; keys power-up
 [[ $(cat "$log") == "display off" ]] || fail "power turns a lit locked display off"
+# Power, short, locked, display off at the press but lit by the lock before
+# the release (after Omarchy's lock blanked it): still a wake, never off
+echo false >"$t/dpms"; echo 0 >"$t/wakerc"
+reset; keys power-down; echo true >"$t/dpms"; keys power-up
+[[ $(cat "$log" | tr '\n' ' ') == "lock wake display on " ]] || fail "power wakes a display that was off at the press"
+[[ -e $t/run/omamobile-keys/power-panel ]] && fail "the release forgets the press's panel state"
 echo "ok - power key: locks dark, wakes lit with the brightness back"

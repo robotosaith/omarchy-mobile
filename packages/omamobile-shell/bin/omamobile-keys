@@ -119,7 +119,12 @@ short_press() {
   if screensaver_up; then
     omarchy-system-lock
   elif locked; then
-    if screen_off; then
+    # Judge by the panel as it was at the press, not now: after Omarchy's
+    # lock blanked the panel itself, the lock lights it again on any key, a
+    # moment after the press. Read at the release, that panel looked lit,
+    # and this press turned it straight back off.
+    if [[ $(cat "$state/power-panel" 2>/dev/null) == off ]] ||
+      { [[ ! -f $state/power-panel ]] && screen_off; }; then
       wake_locked
     else
       omarchy-brightness-display off
@@ -152,6 +157,7 @@ case "${1:-}" in
     rm -f "$state/chord" "$state/long"
     press=$(now)
     echo "$press" >"$state/power"
+    if screen_off; then echo off; else echo on; fi >"$state/power-panel"
     if recent volume-down; then
       chord
     else
@@ -209,6 +215,7 @@ case "${1:-}" in
     else
       short_press
     fi
+    rm -f "$state/power-panel"
     ;;
   *)
     echo "Usage: omamobile-keys power-down|power-up|volume-down|volume-up" >&2
