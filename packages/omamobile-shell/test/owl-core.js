@@ -144,6 +144,44 @@ test("a time-reading let drawn by a Canvas costs each frame its own steps", () =
   }
   eq(reports, [])
 })
+test("a display list of solid rects and circles becomes boxes for the GPU; anything else stays a Canvas", () => {
+  const Paint = load("paint.js")
+  const ink = { foreground: "#ffc0caf5" }
+  const ops = [
+    { op: "rect", args: [-5, 2, 10, 4], fill: "#ff112233" },
+    { op: "translate", args: [10, 10], ops: [{ op: "circle", args: [5, 5, 5] }] },
+    { op: "clip", args: [0, 0, 20, 20], ops: [{ op: "rect", args: [15, 15, 10, 10], color: "#80ffffff" }] },
+    { op: "layer", args: [0.5], ops: [{ op: "rect", args: [1, 1, 2, 2], fill: "#ff000000", radius: 1 }] }
+  ]
+  eq(Paint.boxes(ops, ink, 100, 100, 3), [
+    { x: 0, y: 2, w: 5, h: 4, color: "#ff112233", radius: 0, opacity: 1, rotation: 0 },
+    { x: 10, y: 10, w: 10, h: 10, color: "#ffc0caf5", radius: 5, opacity: 1, rotation: 0 },
+    { x: 15, y: 15, w: 5, h: 5, color: "#80ffffff", radius: 0, opacity: 1, rotation: 0 },
+    { x: 1, y: 1, w: 2, h: 2, color: "#ff000000", radius: 1, opacity: 0.5, rotation: 0 }
+  ])
+  for (const other of [{ op: "text", args: ["", 0, 0], text: "x" }, { op: "rect", args: [0, 0, 1, 1], stroke: "#ff000000" },
+                       { op: "rect", args: [0, 0, 1, 1], fill: { gradient: {} } }, { op: "scale", args: [2], ops: [] },
+                       { op: "clip", args: [0, 0, 5, 5], ops: [{ op: "circle", args: [5, 5, 3] }] }])
+    eq(Paint.boxes([other], ink, 100, 100, 3), null)
+})
+test("a turned group gives boxes turned about their own centres", () => {
+  const Paint = load("paint.js")
+  // 90 degrees about (0, 0): the centre (12, 1) lands on (-1, 12)
+  const got = Paint.boxes([{ op: "rotate", args: [90, 0, 0], ops: [{ op: "rect", args: [10, 0, 4, 2], fill: "#ff000000" }] }], { foreground: "#ffffffff" }, 100, 100, 3)
+  eq(got.length, 1)
+  const g = got[0]
+  assert.ok(Math.abs(g.x + 3) < 1e-9 && Math.abs(g.y - 11) < 1e-9 && g.w === 4 && g.h === 2 && g.rotation === 90, JSON.stringify(g))
+  eq(Paint.boxes([{ op: "rotate", args: [5, 0, 0], ops: [{ op: "clip", args: [0, 0, 5, 5], ops: [] }] }], { foreground: "#ffffffff" }, 100, 100, 3), null)
+})
+test("the koi pond draws as boxes", () => {
+  const Paint = load("paint.js")
+  const koi = 'widget "k" {\n  Canvas { for i in range(150) { rect(i % 30 * 4, floor(i / 30) * 4 + sin(time) * 2, 4, 4, fill: accent) } }\n}'
+  const { program, inst } = instance(koi)
+  inst.frame(1.5)
+  const canvas = program.root.find((n) => n.kind === "Canvas")
+  const list = Paint.boxes(inst.drawCalls(canvas.children, inst.env, 147, 210), { foreground: "#ffffffff" }, 147, 210, 3)
+  assert.ok(list && list.length === 150, String(list && list.length))
+})
 test("501 nodes are refused, 500 are fine; a screen has its own 1000", () => {
   const many = (n) => 'widget "w" {\n  Column {\n' + Array.from({ length: n - 1 }, () => '    Text { text: "x" }\n').join("") + "  }\n}"
   C.compile(many(500))

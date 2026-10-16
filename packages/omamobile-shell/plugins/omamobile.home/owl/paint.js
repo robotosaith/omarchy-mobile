@@ -160,6 +160,88 @@ function paintOne(ctx, op, ink, font, images, scale) {
   }
 }
 
+// A display list made only of filled rectangles and circles (moved,
+// turned, clipped and faded by translate, rotate, clip and layer) as plain
+// boxes [{x, y, w, h, color, radius, opacity, rotation}] in dp, for the
+// scene graph to draw on the GPU: x, y, w, h is the box before it turns
+// about its centre by `rotation` degrees. null when anything else is in it
+// (a stroke, a gradient, text, an image, a path, scale, or a clip inside a
+// turn), and the Canvas paints it. `scale` is device pixels per dp, for
+// `pixel` rects.
+var MAX_BOXES = 1000
+function boxes(ops, ink, width, height, scale) {
+  var out = []
+  function solid(op) {
+    if (op.stroke !== undefined && op.stroke !== null) return null
+    var fill = op.fill !== undefined && op.fill !== null ? op.fill : op.color
+    if (fill === undefined || fill === null) return ink.foreground
+    return typeof fill === "string" ? fill : null
+  }
+  // t: the transform so far, p -> R(t.deg) p + (t.x, t.y), with t.c/t.s
+  // its cosine and sine; clip: the clip in canvas coordinates.
+  function walk(list, t, clip, alpha) {
+    for (var i = 0; i < list.length; i++) {
+      var op = list[i], a = op.args || []
+      var arg = function(k) { return n(a[k], 0) }
+      if (op.op === "rect" || op.op === "circle") {
+        var color = solid(op)
+        if (color === null) return false
+        var x, y, w, h, r
+        if (op.op === "circle") {
+          r = Math.max(arg(2), 0); x = arg(0) - r; y = arg(1) - r; w = h = 2 * r
+        } else {
+          x = arg(0); y = arg(1); w = arg(2); h = arg(3); r = Math.max(n(op.radius, 0), 0)
+          if (w < 0) { x += w; w = -w }
+          if (h < 0) { y += h; h = -h }
+          if (op.pixel && t.deg === 0) {
+            var x1 = snapped(x + w + t.x, scale) - t.x, y1 = snapped(y + h + t.y, scale) - t.y
+            x = snapped(x + t.x, scale) - t.x; y = snapped(y + t.y, scale) - t.y; w = x1 - x; h = y1 - y
+          }
+          r = Math.min(r, w / 2, h / 2)
+        }
+        if (w <= 0 || h <= 0) continue
+        if (out.length >= MAX_BOXES) return false
+        if (t.deg !== 0) {
+          // Turned: the box keeps its size and turns about its own centre.
+          var mx = x + w / 2, my = y + h / 2
+          var cx = t.c * mx - t.s * my + t.x, cy = t.s * mx + t.c * my + t.y
+          out.push({ x: cx - w / 2, y: cy - h / 2, w: w, h: h, color: color, radius: r, opacity: alpha, rotation: t.deg })
+          continue
+        }
+        x += t.x; y += t.y
+        var l = Math.max(x, clip[0]), tp = Math.max(y, clip[1]), rr = Math.min(x + w, clip[2]), b = Math.min(y + h, clip[3])
+        if (rr <= l || b <= tp) continue
+        // A rounded shape cut by a clip can't be one box.
+        if (r > 0 && (l > x || tp > y || rr < x + w || b < y + h)) return false
+        out.push({ x: l, y: tp, w: rr - l, h: b - tp, color: color, radius: r, opacity: alpha, rotation: 0 })
+      } else if (op.op === "translate") {
+        var dx = arg(0), dy = arg(1)
+        if (!walk(op.ops || [], { deg: t.deg, c: t.c, s: t.s, x: t.x + t.c * dx - t.s * dy, y: t.y + t.s * dx + t.c * dy }, clip, alpha)) return false
+      } else if (op.op === "rotate") {
+        // about (px, py): p -> R (p - pivot) + pivot, then the transform so far
+        var deg = arg(0), px = arg(1), py = arg(2)
+        var rad = deg * Math.PI / 180, c = Math.cos(rad), sn = Math.sin(rad)
+        var qx = px - (c * px - sn * py), qy = py - (sn * px + c * py)
+        var nt = { deg: t.deg + deg, c: t.c * c - t.s * sn, s: t.s * c + t.c * sn,
+                   x: t.x + t.c * qx - t.s * qy, y: t.y + t.s * qx + t.c * qy }
+        if (Math.abs(nt.deg % 360) < 1e-9) { nt.deg = 0; nt.c = 1; nt.s = 0 }
+        if (!walk(op.ops || [], nt, clip, alpha)) return false
+      } else if (op.op === "clip") {
+        if (t.deg !== 0) return false
+        var X = arg(0) + t.x, Y = arg(1) + t.y
+        if (!walk(op.ops || [], t, [Math.max(clip[0], X), Math.max(clip[1], Y), Math.min(clip[2], X + arg(2)), Math.min(clip[3], Y + arg(3))], alpha)) return false
+      } else if (op.op === "layer") {
+        var f = Math.max(0, Math.min(1, n(a[0], 1)))
+        if (!walk(op.ops || [], t, clip, alpha * f)) return false
+      } else {
+        return false
+      }
+    }
+    return true
+  }
+  return walk(ops, { deg: 0, c: 1, s: 0, x: 0, y: 0 }, [0, 0, width, height], 1) ? out : null
+}
+
 // Every image a display list draws, so the Canvas can load them first.
 function imageSources(ops, out) {
   var list = out || []
@@ -242,5 +324,5 @@ function withAlpha(color, factor) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { paintList: paintList, imageSources: imageSources, ring: ring, sparkline: sparkline, withAlpha: withAlpha }
+  module.exports = { paintList: paintList, boxes: boxes, imageSources: imageSources, ring: ring, sparkline: sparkline, withAlpha: withAlpha }
 }
