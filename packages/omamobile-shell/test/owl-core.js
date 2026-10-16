@@ -132,6 +132,18 @@ test("a widget that loops hits the step budget, as an error in that value only",
   eq(tree.children[0].c[1].p.text, "still here")
   assert.ok(reports.some((m) => /too much work/.test(m)), reports.join("|"))
 })
+test("a time-reading let drawn by a Canvas costs each frame its own steps", () => {
+  // read() from a frame ran outside any budget run, so the steps piled up
+  // until every frame failed (the koi pond, after about 45 frames).
+  const { program, inst, reports } = instance('widget "w" {\n  let xs = range(500).map(i => i + time)\n  Canvas { rect(xs[0] % 10, 0, 1, 1, fill: accent) }\n}')
+  const canvas = program.root.find((n) => n.kind === "Canvas")
+  for (let f = 0; f < 1000; f++) {
+    inst.time = f / 30
+    for (let i = 0; i < inst.letCache.length; i++) if (inst.letReadsTime[i]) inst.letCache[i] = undefined
+    inst.drawCalls(canvas.children, inst.env, 100, 100)
+  }
+  eq(reports, [])
+})
 test("501 nodes are refused, 500 are fine; a screen has its own 1000", () => {
   const many = (n) => 'widget "w" {\n  Column {\n' + Array.from({ length: n - 1 }, () => '    Text { text: "x" }\n').join("") + "  }\n}"
   C.compile(many(500))

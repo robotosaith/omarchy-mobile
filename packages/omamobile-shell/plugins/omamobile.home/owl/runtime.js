@@ -131,7 +131,13 @@ Instance.prototype = {
       var frame = { time: false }
       this.timeFrames.push(frame)
       var v
-      try { v = C.evaluate(g.value, this.env) } finally { this.timeFrames.pop() }
+      // In a budget run of its own: read from a Canvas frame, outside any
+      // update, the steps would otherwise pile up frame after frame until
+      // every frame failed. Nested in an update, it counts towards that one.
+      var self = this
+      try {
+        v = this.budget.run(function() { return C.evaluate(g.value, self.env) })
+      } finally { this.timeFrames.pop() }
       this.letCache[slot] = v
       this.letReadsTime[slot] = frame.time
       if (frame.time) this.noteTime()
