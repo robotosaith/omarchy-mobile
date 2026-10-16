@@ -237,8 +237,17 @@ Item {
   // restarts with it. So each user widget is recorded in widget-guard.json
   // (written synchronously) while it loads and for its first seconds; an
   // entry still there at the next start was running when the shell died,
-  // and that widget stays off until its files change (a new hash).
+  // and that widget stays off until its files change (a new hash). The file
+  // records the boot it was written in: entries from an earlier boot were
+  // cut off by a reboot or a power-off, not by a crash, and don't count.
   readonly property string guardPath: configDir + "/widget-guard.json"
+  FileView {
+    id: bootIdFile
+    path: "/proc/sys/kernel/random/boot_id"
+    blockLoading: true
+    printErrors: false
+  }
+  readonly property string bootId: String(bootIdFile.text() || "").trim()
   property var guardLoading: ({})
   property var guardCrashed: ({})
   FileView {
@@ -251,16 +260,18 @@ Item {
     onLoaded: {
       var data = {}
       try { data = JSON.parse(text() || "{}") || {} } catch (e) { data = {} }
-      root.guardCrashed = Object.assign({}, data.crashed || {}, data.loading || {})
+      var sameBoot = !data.boot || !root.bootId || data.boot === root.bootId
+      var cut = sameBoot ? (data.loading || {}) : {}
+      root.guardCrashed = Object.assign({}, data.crashed || {}, cut)
       root.guardLoading = ({})
-      Object.keys(data.loading || {}).forEach(function(id) {
+      Object.keys(cut).forEach(function(id) {
         console.warn("omamobile.home: widget " + id + " was loading when the shell stopped; it stays off until it changes")
       })
       root.guardWrite()
     }
   }
   function guardWrite() {
-    guardFile.setText(JSON.stringify({ loading: guardLoading, crashed: guardCrashed }) + "\n")
+    guardFile.setText(JSON.stringify({ boot: root.bootId, loading: guardLoading, crashed: guardCrashed }) + "\n")
   }
   function guardBegin(widgetId, hash) {
     var next = Object.assign({}, guardLoading); next[widgetId] = hash
