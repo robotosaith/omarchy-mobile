@@ -6,7 +6,9 @@
 # There is no D-Bus activation file, so no client can start it either.
 [Unit]
 Description=Omarchy Mobile ModemManager-compatible bridge (omamobile-sitd on D-Bus)
-After=dbus.service omamobile-sitd.service
+# It serves the calls/texts SIM (/etc/omamobile/sims.conf); restart it after
+# changing that SIM.
+After=dbus.service omamobile-sitd.service omamobile-sitd-2.service
 Conflicts=ModemManager.service
 
 [Service]

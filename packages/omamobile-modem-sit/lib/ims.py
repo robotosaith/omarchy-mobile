@@ -77,6 +77,17 @@ def start_stack(client):
     client.request(0x0d39, b'\x01\x01', timeout=30)
 
 
+def register_modem_bearer(client):
+    """[network] ims_bearer = modem: the modem's IMS stack brings up its own
+    IMS bearer once started (raven's firmware: an AP-requested one was
+    refused with 2253, COMPANION_IFACE_IN_USE). Send the IMS settings only,
+    no ADD_PDN_INFO, and wait for IND_AIMS_REGISTRATION."""
+    if REGISTRATION.exists():
+        raise RuntimeError('IMS registration already attempted; inspect before retry')
+    client.request(0x0d07, hidden_menu(), timeout=30)
+    private_write(REGISTRATION, b'{"outcome":"modem IMS bearer; awaiting registration"}')
+
+
 def register(client):
     state_path, response_path = paths(2)
     owned = json.loads(state_path.read_text())

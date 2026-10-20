@@ -47,6 +47,10 @@
 #   WIFI_SSID       optional; WIFI_PSK with it (none for an open network)
 #   CREDENTIAL      pin or password: how the lock screen asks (default pin)
 #   FULL_NAME, EMAIL  optional; git identity, as Omarchy's installer asks
+#   SIM1_APN, SIM2_APN  optional; the mobile data APN of SIM 1 (the tray) and
+#                   SIM 2 (an eSIM), into /etc/omamobile/modem-sit[-2].conf
+#                   (omamobile-modem-sit). Without one a SIM has calls and
+#                   texts, no data
 set -euo pipefail
 
 # Tests run the whole thing against a scratch root and fake commands.
@@ -91,12 +95,12 @@ parse() {
   while IFS= read -r line || [[ -n $line ]]; do
     n=$((n + 1))
     [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
-    [[ $line =~ ^([A-Z_]+)=(.*)$ ]] || die "$file:$n: not a KEY=value line"
+    [[ $line =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || die "$file:$n: not a KEY=value line"
     key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
     [[ $value != *[$'\x01'-$'\x1f\x7f']* ]] || die "$file:$n: $key has control characters"
     case $key in
       SSH_KEY) SSH_KEYS+=("$value") ;;
-      USERNAME|PASSWORD_HASH|HOSTNAME|TIMEZONE|WIFI_SSID|WIFI_PSK|CREDENTIAL|FULL_NAME|EMAIL)
+      USERNAME|PASSWORD_HASH|HOSTNAME|TIMEZONE|WIFI_SSID|WIFI_PSK|CREDENTIAL|FULL_NAME|EMAIL|SIM1_APN|SIM2_APN)
         [[ -z ${C[$key]+x} ]] || die "$file:$n: $key given twice"
         C[$key]=$value ;;
       *) die "$file:$n: unknown key $key" ;;
@@ -143,6 +147,9 @@ validate() {
   [[ ${C[CREDENTIAL]} =~ ^(pin|password)$ ]] || die "CREDENTIAL must be pin or password"
   [[ ${C[FULL_NAME]:-} != *[:,]* ]] || die "FULL_NAME can't contain : or ,"
   [[ -z ${C[EMAIL]:-} || ${C[EMAIL]} =~ ^[^[:space:]@]+@[^[:space:]@]+$ ]] || die "EMAIL '${C[EMAIL]}' is not an address"
+  for k in SIM1_APN SIM2_APN; do
+    [[ -z ${C[$k]:-} || ${C[$k]} =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,99}$ ]] || die "$k '${C[$k]}' is not an APN (letters, digits, dots, dashes)"
+  done
 }
 
 summary() {
@@ -156,6 +163,7 @@ summary() {
     echo "wi-fi:     none"
   fi
   [[ -n ${C[FULL_NAME]:-}${C[EMAIL]:-} ]] && echo "git:       ${C[FULL_NAME]:-} <${C[EMAIL]:-}>"
+  [[ -n ${C[SIM1_APN]:-}${C[SIM2_APN]:-} ]] && echo "mobile:    SIM 1 APN ${C[SIM1_APN]:-none}, SIM 2 APN ${C[SIM2_APN]:-none}"
   return 0
 }
 
@@ -375,6 +383,27 @@ s_wifi() {
   fi
 }
 
+# One key in a modem-sit file's [network] section, keeping the rest.
+set_network_key() {
+  local file=$1 key=$2 value=$3
+  mkdir -p "$(dirname "$file")"
+  [[ -f $file ]] || printf '[network]\n' > "$file"
+  grep -q '^\[network\]' "$file" || printf '[network]\n' >> "$file"
+  awk -v k="$key" -v v="$value" '
+    /^\[/ { if (sec && !done) { print k " = " v; done = 1 } sec = ($0 == "[network]") }
+    sec && $0 ~ "^" k " *=" { if (!done) { print k " = " v; done = 1 } next }
+    { print }
+    END { if (sec && !done) print k " = " v }' "$file" > "$file.new"
+  chmod 644 "$file.new"
+  mv "$file.new" "$file"
+}
+
+s_apns() {
+  [[ -z ${C[SIM1_APN]:-} ]] || set_network_key "$ROOT/etc/omamobile/modem-sit.conf" apn "${C[SIM1_APN]}"
+  [[ -z ${C[SIM2_APN]:-} ]] || set_network_key "$ROOT/etc/omamobile/modem-sit-2.conf" apn "${C[SIM2_APN]}"
+  return 0
+}
+
 s_login() {
   # Omarchy's session (omarchy-settings puts it in /usr/local/share)
   local session="" dir
@@ -432,6 +461,7 @@ step "SSH keys" essential s_ssh
 step "Omarchy system setup" optional s_omarchy_system
 step "services and firewall" essential s_services
 step "Wi-Fi" optional s_wifi
+step "mobile network (APNs)" optional s_apns
 step "login" essential s_login
 step "user setup" optional s_user_setup
 

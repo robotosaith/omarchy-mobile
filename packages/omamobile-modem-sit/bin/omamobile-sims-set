@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""omamobile-sims-set KIND-N: make SIM N the default for KIND (data, calls
+or texts), as root; omamobile-sims-set@KIND-N.service runs it, which the
+active local user may start (polkit), for "omamobile-sit sims set".
+
+The defaults live in /etc/omamobile/sims.conf ([default] data, calls,
+texts). Calls and texts are only recorded: `omamobile-sit dial` and
+`sms send` use them when no --sim is given. Data also moves the modem's
+packet service: [network] data = yes in SIM N's file and no in the
+other's, then both SIM services restart (the other first, so it gives up
+packet service; no PIN is asked while the modem stays up), and mobile
+data, if it was on, comes back on the new SIM.
+"""
+import configparser
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+CONF = os.environ.get('OMAMOBILE_SIMS_CONF', '/etc/omamobile/sims.conf')
+ETC = os.environ.get('OMAMOBILE_SIMS_ETC', '/etc/omamobile')
+SIM_CONF = {1: os.path.join(ETC, 'modem-sit.conf'), 2: os.path.join(ETC, 'modem-sit-2.conf')}
+UNIT = {1: 'omamobile-sitd.service', 2: 'omamobile-sitd-2.service'}
+STATE = {1: '/run/omamobile-sit/state.json', 2: '/run/omamobile-sit-2/state.json'}
+KINDS = ('data', 'calls', 'texts')
+
+
+def set_key(path, section, key, value):
+    """Set one key in an INI file, keeping its comments and order (the file
+    is created if missing)."""
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        lines = []
+    out, current, done = [], None, False
+    for line in lines:
+        m = re.match(r'\s*\[(.+)\]\s*$', line)
+        if m:
+            if current == section and not done:
+                out.append(f'{key} = {value}')
+                done = True
+            current = m.group(1)
+        elif current == section and re.match(rf'\s*{re.escape(key)}\s*=', line):
+            if not done:
+                out.append(f'{key} = {value}')
+                done = True
+            continue
+        out.append(line)
+    if not done:
+        if current != section:
+            out.append(f'[{section}]')
+        out.append(f'{key} = {value}')
+    tmp = path + '.new'
+    with open(tmp, 'w') as f:
+        f.write('\n'.join(out) + '\n')
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def stage(n):
+    try:
+        with open(STATE[n]) as f:
+            return (json.load(f).get('modem') or {}).get('stage')
+    except (OSError, ValueError):
+        return None
+
+
+def systemctl(*args):
+    return subprocess.run(['systemctl', *args], capture_output=True, text=True)
+
+
+def switch_data(n):
+    other = 3 - n
+    set_key(SIM_CONF[n], 'network', 'data', 'yes')
+    set_key(SIM_CONF[other], 'network', 'data', 'no')
+    data_on = systemctl('is-active', '--quiet', 'omamobile-sit-data.service').returncode == 0
+    if data_on:
+        systemctl('stop', 'omamobile-sit-data.service')
+    # The other SIM first: it gives up packet service before SIM n asks.
+    systemctl('restart', '--no-block', UNIT[other])
+    time.sleep(5)
+    systemctl('restart', '--no-block', UNIT[n])
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline and stage(n) != 'running':
+        time.sleep(2)
+    print(f'SIM {n} is the data SIM' + ('' if stage(n) == 'running' else ' (still starting)'), flush=True)
+    if data_on:
+        systemctl('start', '--no-block', 'omamobile-sit-data.service')
+
+
+def main(argv):
+    if len(argv) != 1 or not re.fullmatch(r'(data|calls|texts)-[12]', argv[0]):
+        sys.exit('Usage: omamobile-sims-set data|calls|texts-1|2')
+    kind, n = argv[0].split('-')
+    n = int(n)
+    if not os.path.exists(CONF):
+        with open(CONF, 'w') as f:
+            f.write('# SPDX-License-Identifier: MIT\n# Which SIM does what (omamobile-sit sims; '
+                    'the shell\'s SIMs page).\n[default]\n')
+    set_key(CONF, 'default', kind, str(n))
+    if kind == 'data':
+        switch_data(n)
+    else:
+        print(f'SIM {n} is the default for {kind}', flush=True)
+    if kind == 'calls':
+        # The phone apps reach the modem through omamobile-mmd, which serves
+        # the calls SIM: restart it (only if it runs) to follow the change.
+        systemctl('try-restart', '--no-block', 'omamobile-mmd.service')
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

@@ -11,5 +11,6 @@ for f in lib/*.py; do install -Dm644 "$f" "$d/usr/lib/omamobile-sit/${f#lib/}"; 
 for f in systemd/*.service; do install -Dm644 "$f" "$d/usr/lib/systemd/system/${f#systemd/}"; done
 install -Dm644 networkmanager/90-omamobile-rmnet.conf "$d/usr/lib/NetworkManager/conf.d/90-omamobile-rmnet.conf"
 install -Dm644 etc/omamobile/modem-sit.conf "$d/etc/omamobile/modem-sit.conf"
+install -Dm644 polkit/50-omamobile-sit-data.rules "$d/usr/share/polkit-1/rules.d/50-omamobile-sit-data.rules"
 install -Dm644 LICENSE "$d/usr/share/licenses/omamobile-modem-sit/LICENSE"
 install -Dm644 version "$d/usr/share/omamobile/modem-sit/version"

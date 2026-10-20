@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+// The Mobile data tile: let the active local user start and stop
+// omamobile-sit-data.service ("omamobile-sit data on|off"), and the SIMs page:
+// start omamobile-sims-set@{data,calls,texts}-{1,2}.service ("omamobile-sit sims
+// set"). Nothing else.
+polkit.addRule(function(action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      subject.local && subject.active &&
+      action.lookup("unit") == "omamobile-sit-data.service" &&
+      (action.lookup("verb") == "start" || action.lookup("verb") == "stop")) {
+    return polkit.Result.YES;
+  }
+});
+polkit.addRule(function(action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      subject.local && subject.active &&
+      /^omamobile-sims-set@(data|calls|texts)-[12]\.service$/.test(action.lookup("unit") || "") &&
+      action.lookup("verb") == "start") {
+    return polkit.Result.YES;
+  }
+});

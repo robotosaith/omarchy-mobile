@@ -76,7 +76,13 @@ class SimulatorTests(unittest.TestCase):
     def wait_ready(self, seconds=40):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            if (self.dir / 'run' / 'socket').exists():
+            # The socket opens before start-up (a SIM PIN can be entered
+            # while it waits); ready is the published 'running' stage.
+            try:
+                state = json.loads((self.dir / 'run' / 'state.json').read_text())
+            except (OSError, ValueError):
+                state = {}
+            if state.get('modem', {}).get('stage') == 'running':
                 return
             if self.daemon.poll() is not None:
                 self.fail('daemon exited: ' + (self.dir / 'daemon.log').read_text())
@@ -187,13 +193,13 @@ class SimulatorTests(unittest.TestCase):
         reader = self.subscribe()
         status = self.next_status(reader, lambda s: s['modem']['sim']['state'] != 'unknown')
         modem = status['modem']
-        self.assertEqual((modem['sim'], modem['radio'], modem['registration']),
-                         (dict(state='absent'), 'off', 'not-registered'))
+        self.assertEqual((modem['sim']['state'], modem['radio'], modem['registration']),
+                         ('absent', 'off', 'not-registered'))
         self.assertIn('999', modem['emergency_numbers'])
         self.assertEqual((status['calls'], status['sms']), ([], dict(received=[])))
         entries = self.transcript_entries()
         self.assertFalse([e for e in entries if 'violation' in e or e.get('type') == 'at'])
-        self.assertLessEqual({e['id'] for e in entries if e.get('type') == 'req'}, {0x0200, 0x0701, 0x0801})
+        self.assertLessEqual({e['id'] for e in entries if e.get('type') == 'req'}, {0x0200, 0x0701, 0x0801, 0x0900})
 
     def test_subscription_follows_calls_and_messages(self):
         self.start()
@@ -238,11 +244,16 @@ class SimulatorTests(unittest.TestCase):
         self.assertNotIn(0x0d08, ids)
         self.assertFalse([e for e in self.transcript_entries() if 'violation' in e])
 
-    def test_no_apn_never_switches_the_radio(self):
+    def test_no_apn_registers_without_a_data_bearer(self):
+        # Since 0.3.37 a SIM without an APN still registers for calls and
+        # texts; it only never asks for a data bearer or an attach APN.
         (self.dir / 'modem-sit.conf').write_text('[audio]\ncard = none\n')
         self.start()
-        self.assertNotEqual(self.daemon.wait(30), 0)
-        self.assertFalse([e for e in self.transcript_entries() if e.get('type') == 'at'])
+        self.wait_ready()
+        ids = [e.get('id') for e in self.transcript_entries() if e.get('dir') == 'in']
+        self.assertNotIn(0x0600, ids)   # SETUP_DATA_CALL
+        self.assertNotIn(0x0603, ids)   # SET_INITIAL_ATTACH_APN
+        self.assertFalse([e for e in self.transcript_entries() if 'violation' in e])
 
 
 if __name__ == '__main__':

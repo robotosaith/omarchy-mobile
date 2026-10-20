@@ -10,6 +10,13 @@ for d in (os.path.join(here, "..", "lib"), os.path.join(here, "..", "lib", "omam
     if os.path.exists(os.path.join(d, "data_network.py")):
         sys.path.insert(0, d)
         break
+# The data SIM's bearer (/etc/omamobile/sims.conf [default] data; SIM 1
+# if unset): paths.py picks its files from OMAMOBILE_SIT_SIM.
+if 'OMAMOBILE_SIT_SIM' not in os.environ:
+    import configparser
+    sims = configparser.ConfigParser(interpolation=None)
+    sims.read(os.environ.get('OMAMOBILE_SIMS_CONF', '/etc/omamobile/sims.conf'))
+    os.environ['OMAMOBILE_SIT_SIM'] = sims.get('default', 'data', fallback='1')
 import data_network  # noqa: E402
 
 data_network.main()

@@ -69,6 +69,26 @@ class LifecycleTests(unittest.TestCase):
             data_call.activate(modem, APN)
         self.assertNotIn(0x0600, [i for i, _ in modem.sent])
 
+    def test_restart_clears_a_record_whose_bearer_is_gone(self):
+        self.state.write_text(json.dumps(dict(cid=1, session=3)))
+        modem = Modem()
+        data_call.activate(modem, APN)
+        sent = [i for i, _ in modem.sent]
+        self.assertIn((0x061b, struct.pack('<i', 3)), modem.sent[:4])
+        self.assertIn(0x0600, sent)
+
+    def test_restart_keeps_its_own_live_bearer(self):
+        self.state.write_text(json.dumps(dict(cid=1, session=3)))
+        record = bytearray(292)
+        record[1] = 1                      # CID 1, as call_ids reads it
+        modem = Modem()
+        listed = bytes([1]) + bytes(record)
+        original = modem.request
+        modem.request = lambda ident, payload=b'', **k: listed if ident == 0x0602 else original(ident, payload, **k)
+        with patch.object(data_call, 'call_ids', return_value={1}):
+            self.assertIsNone(data_call.activate(modem, APN))
+        self.assertNotIn(0x0600, [i for i, _ in modem.sent])
+
     def test_setup_timeout_keeps_pdu_reserved_for_recovery(self):
         modem = Modem()
         request = modem.request

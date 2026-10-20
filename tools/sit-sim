@@ -168,6 +168,42 @@ class Sim:
     def r_0801(self, mid, token, p):            # GET_RADIO_POWER
         self.respond(mid, token, 0, struct.pack('<I', self.radio_state))
 
+    # The requests omamobile-modem-sit 0.3.12+ adds (raven, MODEM-PLAN):
+    # SMS memory status, signal strength, preferred network type, SIM
+    # subscription, the preferred data modem, CS registration.
+    def r_010a(self, mid, token, p):            # SEND_SMS_MEM_STATUS
+        self.respond(mid, token)
+
+    def r_0900(self, mid, token, p):            # GET_SIGNAL_STRENGTH: LTE, RSRP -86 dBm
+        b = bytearray(198)
+        b[0] = 4
+        struct.pack_into('<IIIiII', b, 62, 27, 86, 7, 20, 1, 11)
+        self.respond(mid, token, 0, bytes(b))
+
+    def r_070b(self, mid, token, p):            # GET_PREFERRED_NTW_TYPE
+        self.respond(mid, token, 0, struct.pack('<I', getattr(self, 'ntw_type', 9)))
+
+    def r_070a(self, mid, token, p):            # SET_PREFERRED_NTW_TYPE
+        self.ntw_type = struct.unpack_from('<I', p)[0]
+        self.respond(mid, token)
+
+    def r_024d(self, mid, token, p):            # GET_SLOT_STATUS: the tray, logical 0
+        slots = bytearray(65 * 2)
+        slots[0], slots[1], slots[0x24] = 1, 1, 0
+        slots[65 + 0x24] = 0xff
+        self.respond(mid, token, 0, bytes([2]) + bytes(slots))
+
+    def r_0249(self, mid, token, p):            # SET_UICC_SUBSCRIPTION
+        self.respond(mid, token)
+
+    def r_0740(self, mid, token, p):            # SET_PREFERRED_DATA_MODEM
+        self.respond(mid, token)
+
+    def r_0700(self, mid, token, p):            # GET_CS_REG_STATE: home on LTE
+        b = bytearray(64)
+        b[0], b[2] = 1, 14
+        self.respond(mid, token, 0, bytes(b))
+
     def r_0749(self, mid, token, p):
         self.respond(mid, token, 0, bytes([self.nr_mode]))
 

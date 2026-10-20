@@ -29,6 +29,41 @@ class ServiceTests(unittest.TestCase):
             repeated=self.service.send_sms(req)
             self.assertEqual(repeated['state'],result['state'])
             self.assertEqual(self.client.request.call_count,before)
+    def test_cs_sms_without_ims(self):
+        # [network] ims = no: GET_CS_REG_STATE must say registered, then SEND_SMS
+        # carries domain 0, the SMSC from GET_SMSC_ADDR and the TPDU.
+        self.service.settings['network']['ims']='no'
+        smsc=bytes([7])+bytes.fromhex('914477')+bytes(9)
+        sent=[]
+        def request(ident,payload=b'',timeout=8):
+            if ident==0x0700: return bytes([1])+bytes(75)
+            if ident==0x0108: return smsc
+            if ident==0x0100: sent.append(payload); return bytes(253)
+            raise AssertionError(hex(ident))
+        self.client.request.side_effect=request
+        result=self.service.send_sms(dict(request_id='c'*32,number='+12025550123',text='Hi'))
+        self.assertEqual(result['state'],'sent')
+        self.assertEqual(len(sent),1)
+        p=sent[0]
+        self.assertEqual((len(p),p[0],p[1:14],p[15:15+p[14]][:1]),(259,0,smsc,bytes([0x01])))
+        self.service.ready.assert_not_called()
+    def test_cs_sms_network_refusal_fails(self):
+        # The SIT error is 0 even when the network refuses (RP-cause 28 seen on
+        # raven); the cause at 249 decides.
+        self.service.settings['network']['ims']='no'
+        def request(ident,payload=b'',timeout=8):
+            if ident==0x0700: return bytes([1])+bytes(75)
+            if ident==0x0108: return bytes([7])+bytes.fromhex('914477')+bytes(9)
+            if ident==0x0100: return bytes(249)+struct.pack('<I',28)
+            raise AssertionError(hex(ident))
+        self.client.request.side_effect=request
+        result=self.service.send_sms(dict(request_id='e'*32,number='+12025550123',text='Hi'))
+        self.assertEqual(result['state'],'failed')
+    def test_cs_sms_needs_cs_registration(self):
+        self.service.settings['network']['ims']='no'
+        self.client.request.side_effect=lambda ident,payload=b'',timeout=8: bytes(76) if ident==0x0700 else bytes(13)
+        with self.assertRaisesRegex(RuntimeError,'not registered'):
+            self.service.send_sms(dict(request_id='d'*32,number='+12025550123',text='Hi'))
     def test_wap_push_parts_join_into_data(self):
         inbox=self.root/'inbox'; inbox.mkdir()
         pieces=[bytes(range(0,100)),bytes(range(100,160))]
@@ -119,3 +154,97 @@ class ServiceTests(unittest.TestCase):
             self.service.hangup_deadline=0.001
             with self.assertRaises(RuntimeError): self.service.pump()
             stop.assert_called_once()
+
+
+def sim_payload(state=2, pin_retries=3, aid=bytes(range(16))):
+    app = bytearray(63)
+    app[0], app[1], app[3] = 2, state, len(aid)
+    app[4:4 + len(aid)] = aid
+    app[59], app[60] = pin_retries, 10
+    return bytes([1, 0, 1]) + bytes(app)
+
+
+class SimPinTests(unittest.TestCase):
+    def service(self, statuses, verify_error=None):
+        svc = app_service.Service.__new__(app_service.Service)
+        svc.client = Mock()
+        sent = []
+
+        def request(ident, payload=b'', timeout=8):
+            if ident == 0x0200:
+                return statuses.pop(0)
+            sent.append((ident, payload))
+            if verify_error:
+                raise app_service.ModemError(verify_error, b'')
+            return b''
+        svc.client.request.side_effect = request
+        svc.publish = Mock()
+        return svc, sent
+
+    def test_startup_publishes_the_pin_prompt(self):
+        svc, _ = self.service([])
+        svc.note_sim(sim_payload())
+        self.assertEqual(svc.sim['state'], 'pin')
+        self.assertEqual(svc.sim['pin_retries'], 3)
+        svc.publish.assert_called_once()
+
+    def test_startup_socket_refuses_other_actions(self):
+        import json, os, socket
+        svc = Mock()
+        ours, theirs = socket.socketpair()
+        with ours, theirs:
+            theirs.sendall(json.dumps(dict(action='sms-send', number='+0', text='x')).encode() + b'\n')
+            app_service.serve_one(svc, ours, {os.getuid()}, app_service.STARTUP_ACTIONS)
+            reply = json.loads(theirs.recv(4096))
+        self.assertFalse(reply['ok'])
+        self.assertEqual(reply['error'], 'The modem is still starting')
+        svc.dispatch.assert_not_called()
+
+    def test_payload_layout(self):
+        payload = app_service.verify_pin_payload('1234', bytearray(sim_payload()[3:]))
+        self.assertEqual(len(payload), 26)
+        self.assertEqual(payload[0], 4)
+        self.assertEqual(payload[1:9], b'1234\0\0\0\0')
+        self.assertEqual(payload[9], 16)
+        self.assertEqual(payload[10:26], bytes(range(16)))
+
+    def test_pin_must_be_digits(self):
+        for pin in ('123', '123456789', '12a4', '', None, '１２３４'):
+            with self.assertRaises(ValueError):
+                app_service.verify_pin_payload(pin, bytearray(sim_payload()[3:]))
+
+    def test_unlock(self):
+        svc, sent = self.service([sim_payload(), sim_payload(state=5)])
+        self.assertEqual(svc.sim_pin('1234', False)['sim']['state'], 'ready')
+        self.assertEqual([i for i, _ in sent], [0x0201])
+
+    def test_wrong_pin(self):
+        svc, sent = self.service([sim_payload(), sim_payload(pin_retries=2)], verify_error=12)
+        with self.assertRaisesRegex(RuntimeError, '^Wrong PIN$'):
+            svc.sim_pin('1234', False)
+
+    def test_refusal_without_a_try(self):
+        svc, sent = self.service([sim_payload(), sim_payload()], verify_error=2)
+        with self.assertRaisesRegex(RuntimeError, 'no try was used'):
+            svc.sim_pin('1234', False)
+
+    def test_last_try_needs_consent(self):
+        svc, sent = self.service([sim_payload(pin_retries=1)])
+        with self.assertRaisesRegex(RuntimeError, 'One PIN try left'):
+            svc.sim_pin('1234', False)
+        self.assertEqual(sent, [])
+
+    def test_not_locked(self):
+        svc, sent = self.service([sim_payload(state=5)])
+        with self.assertRaises(RuntimeError):
+            svc.sim_pin('1234', False)
+        self.assertEqual(sent, [])
+
+    def test_gate(self):
+        import sit
+        with self.assertRaises(ValueError):
+            sit.check(0x0201)
+        sit.check(0x0201, pin=True)
+        for ident in (0x0202, 0x0205, 0x020a):  # PUK, PIN change, the lock
+            with self.assertRaises(ValueError):
+                sit.check(ident, pin=True)

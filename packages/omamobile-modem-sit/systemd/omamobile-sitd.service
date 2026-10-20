@@ -8,15 +8,19 @@
 Description=Omarchy Mobile SIT RIL (S5300 calls, SMS, registration)
 Requires=omamobile-modem.service
 After=omamobile-modem.service omamobile-audio.service
-ConditionPathExists=/dev/umts_ipc0
+# Nothing to serve on a phone without the modem's vendor files (provisioning).
+ConditionPathExists=/usr/lib/omamobile-vendor/modem/root
 
 [Service]
 Type=notify
 NotifyAccess=main
+# CPIF's channels appear just after the modem unit reports ONLINE.
+ExecStartPre=/bin/sh -c 'for i in $(seq 60); do [ -e /dev/umts_ipc0 ] && exit 0; sleep .5; done; echo "no CPIF channel" >&2; exit 1'
 ExecStart=/usr/bin/omamobile-sitd --bringup
 Restart=no
-# SIM, registration and IMS can take minutes on a fresh CP.
-TimeoutStartSec=15min
+# Start-up waits for the SIM's PIN (omamobile-sit sim-pin) as long as it
+# takes; SIM, registration and IMS can take minutes on a fresh CP.
+TimeoutStartSec=infinity
 # Time to hang up a call and restore the audio routes.
 TimeoutStopSec=60
 RuntimeDirectory=omamobile-sit

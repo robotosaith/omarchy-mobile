@@ -25,8 +25,21 @@ from bridge import Bridge
 from exporter import Exporter
 from sitd_link import SitdLink
 
-RUN = os.environ.get('OMAMOBILE_SIT_RUN', '/run/omamobile-sit')
-SIT_CONFIG = os.environ.get('OMAMOBILE_SIT_CONFIG', '/etc/omamobile/modem-sit.conf')
+def calls_sim(path=os.environ.get('OMAMOBILE_SIMS_CONF', '/etc/omamobile/sims.conf')):
+    """The SIM for calls and texts (omamobile-modem-sit's sims.conf
+    [default] calls; SIM 1 when unset). With two SIMs the bridge serves
+    that one: the phone apps see the SIM the owner picked on the SIMs page."""
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(path)
+        return 2 if parser.get('default', 'calls', fallback='1').strip() == '2' else 1
+    except (OSError, configparser.Error):
+        return 1
+
+
+SUFFIX = '' if calls_sim() == 1 else '-2'
+RUN = os.environ.get('OMAMOBILE_SIT_RUN', f'/run/omamobile-sit{SUFFIX}')
+SIT_CONFIG = os.environ.get('OMAMOBILE_SIT_CONFIG', f'/etc/omamobile/modem-sit{SUFFIX}.conf')
 
 
 def sit_settings(path):

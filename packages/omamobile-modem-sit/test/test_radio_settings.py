@@ -26,10 +26,13 @@ class NrModeTests(unittest.TestCase):
                 with self.assertRaises(TimeoutError):
                     radio_settings.nr_mode(client)
                 self.assertEqual(saved.read_bytes(), b'\3')
-                with self.assertRaises(RuntimeError):
-                    radio_settings.nr_mode(client)
-                client.value = b'\0'
+                # A restarted sitd keeps the first run's original, even once
+                # the modem already reads 0.
                 client.fail = False
+                radio_settings.nr_mode(client)
+                self.assertEqual(client.value, b'\0')
+                radio_settings.nr_mode(client)
+                self.assertEqual(saved.read_bytes(), b'\3')
                 radio_settings.nr_mode(client, restore=True)
                 self.assertEqual(client.value, b'\3')
                 self.assertFalse(saved.exists())

@@ -45,7 +45,7 @@ LIVE = (mm.CALL_DIALING, mm.CALL_RINGING_OUT, mm.CALL_RINGING_IN, mm.CALL_ACTIVE
         mm.CALL_WAITING)
 NOT_YET = {
     'data': 'Mobile data through ModemManager (T3); omamobile-sit-data owns rmnet0 for now',
-    'pin': 'SIM PIN entry (T8); take the PIN lock off in another phone',
+    'pin': 'PUK entry and PIN changes (T8); only SendPin is supported',
     'emergency': 'Emergency calls on this phone (they are untested; keep another phone for emergencies)',
 }
 
@@ -669,7 +669,22 @@ class Bridge:
                           number=self.x.get(path, mm.SMS, 'Number'), text=self.x.get(path, mm.SMS, 'Text'))
 
     def handle_sim(self, interface, method, args, reply):
-        raise unsupported(NOT_YET['pin'])
+        # SendPin only: sitd sends one VERIFY_SIM_PIN while the SIM asks for
+        # it, and refuses the last try (a wrong one locks the SIM behind its
+        # PUK), so a client's retry loop can't lock it. PUK, PIN change and
+        # the lock switch stay unsupported.
+        if method != 'SendPin':
+            raise unsupported(NOT_YET['pin'])
+        pin, = args
+
+        def done(result, error):
+            if error is None:
+                return reply.ok()
+            failure = sitd_error(error)
+            if str(error) == 'Wrong PIN':
+                failure.name = mm.MM + '.Error.MobileEquipment.IncorrectPassword'
+            reply.error(failure)
+        self.link.request('sim-pin', done, timeout=30, pin=pin)
 
     def handle_bearer(self, interface, method, args, reply):
         raise unsupported(NOT_YET['data'])

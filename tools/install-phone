@@ -45,6 +45,8 @@
 # Answers are read from standard input, so they can be piped for tests.
 set -euo pipefail
 shopt -s nullglob
+# debugfs and friends live in /sbin on Debian-like hosts
+export PATH=$PATH:/usr/sbin:/sbin
 # Byte-wise character ranges in the checks below ([ -~] is printable ASCII)
 export LC_ALL=C
 
@@ -191,6 +193,10 @@ bl_b=$(sed -nE 's/^version-bootloader[-_:]b:[ ]*//p' <<<"$vars" | head -1)
 if [[ -n $bl_a && -n $bl_b ]]; then
   [[ $bl_a == "$bl_b" ]] || die "the bootloader slots differ (a: $bl_a, b: $bl_b): flash the same factory bootloader to both from stock first"
   note "bootloader $bl_a on both slots"
+elif [[ $current_slot == b ]]; then
+  # Already running slot B's bootloader: --set-active=b switches nothing,
+  # so the bootloader after the install is the one running now.
+  note "bootloader $current_bl on slot b, the current slot: activating b switches nothing"
 elif [[ -n $slots_match ]]; then
   [[ $slots_match == "$current_bl" ]] || die "--bootloader-slots-match $slots_match, but slot ${current_slot:-?} has $current_bl"
   note "bootloader $current_bl on slot ${current_slot:-?}; the other slot confirmed by you (--bootloader-slots-match)"
@@ -251,6 +257,15 @@ if [[ -n $wifi_ssid ]]; then
   [[ -z $wifi_psk || $wifi_psk =~ ^[\ -~]{8,63}$ || $wifi_psk =~ ^[0-9A-Fa-f]{64}$ ]] ||
     die "a Wi-Fi password is 8-63 printable characters"
 fi
+# The SIMs' mobile data APNs (optional: without one a SIM has calls and
+# texts only), one per slot the device names (device.conf SIM_SLOTS).
+read -r -a sim_slots <<<"${D[SIM_SLOTS]:-tray}"
+sim_apns=()
+for i in "${!sim_slots[@]}"; do
+  apn=$(ask "Mobile data APN for SIM $((i + 1)) (${sim_slots[$i]}) (optional; Enter to skip)")
+  [[ -z $apn || $apn =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,99}$ ]] || die "'$apn' is not an APN (letters, digits, dots, dashes)"
+  sim_apns+=("$apn")
+done
 while true; do
   key_file=$(ask "SSH public key for root and $username" "$HOME/.ssh/id_ed25519.pub")
   key_file=${key_file/#\~/$HOME}
@@ -283,6 +298,9 @@ trap cleanup EXIT
       echo "WIFI_SSID=$wifi_ssid"
       [[ -n $wifi_psk ]] && echo "WIFI_PSK=$wifi_psk"
     fi
+    for i in "${!sim_apns[@]}"; do
+      [[ -n ${sim_apns[$i]} ]] && echo "SIM$((i + 1))_APN=${sim_apns[$i]}"
+    done
   } > "$conf_file"
   printf '%s\n' "$ssh_key" > "$keys_file"
 )
@@ -345,6 +363,7 @@ say "The plan"
 note "phone:     ${D[NAME]:-$CODENAME} ($CODENAME), serial $serial"
 note "user:      $username ($credential), host $hostname, time zone $timezone"
 note "Wi-Fi:     ${wifi_ssid:-none}"
+for i in "${!sim_slots[@]}"; do note "SIM $((i + 1)):     ${sim_slots[$i]}, APN ${sim_apns[$i]:-none (calls and texts only)}"; done
 note "SSH key:   ${ssh_key:0:40}... (root and $username)"
 note "root image: $(basename "$rootfs")"
 echo

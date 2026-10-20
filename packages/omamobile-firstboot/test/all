@@ -68,6 +68,7 @@ WIFI_PSK=$PSK
 CREDENTIAL=pin
 FULL_NAME=Alice Example
 EMAIL=alice@example.org
+SIM2_APN=internet.example
 EOF
 }
 
@@ -76,6 +77,7 @@ good > "$t/good.conf"
 out=$(check "$t/good.conf") || fail "a good conf passes: $out"
 grep -q 'user:      alice' <<<"$out" || fail "--check names the user"
 grep -q 'Home Net (WPA-PSK)' <<<"$out" || fail "--check names the network"
+grep -q 'SIM 2 APN internet.example' <<<"$out" || fail "--check names the APNs"
 grep -qF "$PSK" <<<"$out" && fail "--check never prints the passphrase"
 grep -qF "$HASH" <<<"$out" && fail "--check never prints the hash"
 pass "--check accepts a good conf and prints no secret"
@@ -149,10 +151,12 @@ for unit in sshd.service systemd-networkd.service NetworkManager.service sddm.se
 done
 grep -qx alice-phone "$R/etc/hostname" || fail "the host name"
 [[ $(readlink "$R/etc/localtime") == /usr/share/zoneinfo/Europe/Paris ]] || fail "the time zone"
+grep -qx 'apn = internet.example' "$R/etc/omamobile/modem-sit-2.conf" || fail "SIM 2's APN written"
+[ -e "$R/etc/omamobile/modem-sit.conf" ] && grep -q '^apn = ' "$R/etc/omamobile/modem-sit.conf" && fail "no APN for SIM 1 when none was given"
 wifi=$(ls "$R"/etc/NetworkManager/system-connections/*.nmconnection)
 grep -qx 'ssid=Home Net' "$wifi" && grep -qxF "psk=$PSK" "$wifi" || fail "the Wi-Fi connection"
 [[ $(stat -c %a "$wifi") == 600 ]] || fail "the Wi-Fi connection is root-only"
-printf '[Autologin]\nUser=alice\nSession=omarchy.desktop\n' | cmp -s - "$R/etc/sddm.conf.d/autologin.conf" || fail "SDDM logs alice in"
+[[ $(cat "$R/etc/sddm.conf.d/autologin.conf" 2>/dev/null) == $'[Autologin]\nUser=alice\nSession=omarchy.desktop' ]] || fail "SDDM logs alice in"
 grep -qx pin "$R/home/alice/.config/omamobile/credential" || fail "the credential type"
 [[ -e $R/home/alice/.local/state/omarchy/toggles/lock-on-start ]] || fail "the phone locks after boot"
 grep -qF "$PSK" "$R/var/log/omamobile/firstboot.log" "$t/run.out" && fail "the log never has the passphrase"

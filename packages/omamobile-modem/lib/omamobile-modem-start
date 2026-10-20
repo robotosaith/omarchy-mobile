@@ -30,7 +30,7 @@ if [[ -d /sys/module/pcie_gs201_cp ]]; then
   [[ $(cat /sys/module/pcie_gs201_cp/parameters/allow_hw) == Y ]] ||
     { say "pcie_gs201_cp is loaded without allow_hw=1: reboot first"; exit 1; }
 fi
-# CPIF and the regions are blacklisted (omamobile-device-cheetah): only this
+# CPIF and the regions are blacklisted (the device package): only this
 # loads them. Never unload cpif (it is permanent by design).
 modprobe pcie-gs201-cp allow_hw=1
 modprobe shm_ipc

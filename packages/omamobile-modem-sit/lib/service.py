@@ -41,8 +41,11 @@ import time
 
 import cp
 import paths
-from at import radio
+from at import radio  # noqa: F401  (tests patch service.radio)
+from modem_setup import sms_memory_available, switch_radio
 from calls import call_status, dial_payload, ring
+import cs_calls
+import signal_strength
 from data_call import paths as bearer_paths
 from ims import REGISTRATION, record_registration
 from inbox import persist_sms
@@ -58,7 +61,7 @@ SOCKET = paths.RUN / 'socket'
 # GET_RADIO_POWER / IND_RADIO_STATE_CHANGED (MODEM-SIT-RESEARCH 3.1):
 # INITIALIZED and STOP_NETWORK are off, START_NETWORK on, POWER_OFF is the
 # state without a SIM (M4.1i), RESET is unavailable.
-RADIO = {0: 'off', 1: 'off', 2: 'on', 3: 'off', 4: 'unavailable'}
+RADIO = {0: 'off', 1: 'off', 2: 'on', 3: 'off', 4: 'unavailable', 10: 'on'}  # 10: raven's ON
 # GET_SIM_STATUS application states, as AOSP's RIL_AppState (the bring-up's
 # "(2, 5)" is a USIM, READY; "state 2" is PIN, M4.1).
 APP_STATES = {0: 'unknown', 1: 'detected', 2: 'pin', 3: 'puk', 4: 'network-locked', 5: 'ready'}
@@ -68,14 +71,19 @@ EMERGENCY_NO_SIM = ('000', '08', '110', '118', '119', '999')
 SUBSCRIBERS = 8
 
 
+def sim_app(payload):
+    """GET_SIM_STATUS's USIM record, else its SIM record, else the first."""
+    if len(payload) < 3 or payload[2] > 8 or len(payload) < 3 + payload[2] * 63:
+        raise ValueError('Unexpected SIM status layout')
+    apps = [payload[i:i + 63] for i in range(3, 3 + payload[2] * 63, 63)]
+    return next((a for a in apps if a[0] == 2), next((a for a in apps if a[0] == 1), apps[0] if apps else None))
+
+
 def sim_status(payload):
     """GET_SIM_STATUS without identifiers: the card state, and the USIM's
     (else the first application's) state and PIN/PUK retries. AIDs and
     labels are never read."""
-    if len(payload) < 3 or payload[2] > 8 or len(payload) < 3 + payload[2] * 63:
-        raise ValueError('Unexpected SIM status layout')
-    apps = [payload[i:i + 63] for i in range(3, 3 + payload[2] * 63, 63)]
-    app = next((a for a in apps if a[0] == 2), next((a for a in apps if a[0] == 1), apps[0] if apps else None))
+    app = sim_app(payload)
     card = payload[0]
     if card == 0:
         return dict(state='absent')
@@ -87,6 +95,19 @@ def sim_status(payload):
     if status['state'] in ('pin', 'puk', 'ready'):
         status.update(pin_retries=app[59], puk_retries=app[60])
     return status
+
+
+def verify_pin_payload(pin, app):
+    """VERIFY_SIM_PIN (MODEM-SIT-RESEARCH 0x0201): u8 PIN length, the PIN
+    as ASCII digits in 8 bytes, u8 AID length, the AID in 16 bytes; the AID
+    is the application's own, passed through and never kept."""
+    if not (isinstance(pin, str) and pin.isascii() and pin.isdigit() and 4 <= len(pin) <= 8):
+        raise ValueError('The PIN is 4 to 8 digits')
+    aid_len = app[3]
+    if aid_len > 16:
+        raise ValueError('Unexpected SIM status layout')
+    return (bytes([len(pin)]) + pin.encode().ljust(8, b'\0')
+            + bytes([aid_len]) + bytes(app[4:4 + aid_len]).ljust(16, b'\0'))
 
 
 def database(path):
@@ -135,11 +156,36 @@ class Service:
         self.net = dict(reg='unknown', rat='', operator='', plmn='')
         self.sim = dict(state='unknown')
         self.radio = 'unknown'
+        self.signal = 0
         self.current_stage = 'starting'
         self.next_poll = 0
         self.published = None
         self.subscribers = []
         self.broadcast_line = None
+        # Start-up's waits call this, so the socket answers (status, sim-pin)
+        # while the SIM still asks for its PIN.
+        self.idle = lambda: None
+
+    def cs_only(self):
+        """Two SIMs and this one isn't the data SIM ([network] stacks = 2,
+        data = no): no packet service, calls and texts over CS."""
+        net = self.settings['network']
+        try:
+            return net.getint('stacks', 1) > 1 and not net.getboolean('data', True)
+        except ValueError:
+            return False
+
+    def stack(self):
+        try:
+            return self.settings['network'].getint('stack', paths.SIM - 1)
+        except ValueError:
+            return paths.SIM - 1
+
+    def note_sim(self, payload):
+        """The SIM state start-up read: published so that `omamobile-sit
+        sim-pin` sees a SIM asking for its PIN."""
+        self.sim = sim_status(payload)
+        self.publish()
 
     def stage(self, name):
         self.current_stage = name
@@ -150,6 +196,83 @@ class Service:
             return json.loads(REGISTRATION.read_text())
         except (OSError, ValueError):
             return {}
+
+    def sim_pin(self, pin, last_try):
+        """One VERIFY_SIM_PIN, only while the SIM asks for its PIN. With one
+        try left it needs last_try: a wrong PIN then locks the SIM behind
+        its PUK. Never retried: a failure reads the retries again."""
+        payload = self.client.request(0x0200, timeout=5)
+        app = sim_app(payload)
+        status = sim_status(payload)
+        if status.get('state') != 'pin' or app is None:
+            raise RuntimeError('The SIM is not asking for its PIN')
+        left = status.get('pin_retries', 0)
+        if left < 1:
+            raise RuntimeError('The SIM has no PIN tries left; it needs its PUK')
+        if left == 1 and not last_try:
+            raise RuntimeError('One PIN try left: a wrong PIN locks the SIM behind its PUK')
+        try:
+            self.client.request(0x0201, verify_pin_payload(pin, app), timeout=10)
+            error = None
+        except ModemError as failure:
+            error = failure
+        self.next_poll = 0
+        self.sim = sim_status(self.client.request(0x0200, timeout=5))
+        self.publish()
+        if error is not None:
+            if self.sim.get('state') == 'pin' and self.sim.get('pin_retries') == left:
+                raise RuntimeError('The modem refused the PIN request; no try was used')
+            raise RuntimeError('Wrong PIN')
+        return dict(sim=self.sim)
+
+    @property
+    def cs(self):
+        # Without IMS ([network] ims = no) calls and texts use the CS domain.
+        return not self.settings['network'].getboolean('ims', True)
+
+    def cs_sync(self):
+        """Reconcile the calls with GET_CURRENT_CALLS: the CS domain only
+        says that something changed (IND_CALL_STATE_CHANGED, IND_CALL_RING)."""
+        listed = cs_calls.call_list(self.client.request(0x0000, timeout=5))
+        seen = set()
+        for entry in listed:
+            call = next((c for c in self.live() if c['modem_id'] == entry['index']), None)
+            if call is None and self.pending and not entry['incoming']:
+                call = self.calls[self.pending]
+                call['modem_id'] = entry['index']
+                self.pending = None
+            if call is None:
+                if entry['state'] not in ('ringing-in', 'waiting'):
+                    continue
+                # No auto-answer: a client presents the call and the user answers.
+                call = self.new_call(entry['number'], 'incoming', entry['state'], entry['index'])
+                print('Incoming call ringing', flush=True)
+            seen.add(call['id'])
+            if call['state'] != entry['state']:
+                call['state'] = entry['state']
+                call['since'] = time.time()
+                if entry['state'] == 'active' and call['direction'] == 'incoming' and self.audio is None:
+                    self.audio_start()
+        ended = [c for c in self.live() if c['id'] not in seen and c['id'] != self.pending]
+        if ended:
+            try:
+                # GET_LAST_CALL_FAIL_CAUSE: 16 is a normal release.
+                cause = struct.unpack_from('<I', self.client.request(0x0002, timeout=5))[0]
+            except (ModemError, TimeoutError, struct.error):
+                cause = None
+            for call in ended:
+                call['state'] = 'terminated'
+                call['reason'] = 'terminated' if cause in (16, 31) else 'error'
+                call['since'] = time.time()
+            if not self.live():
+                self.audio_stop()
+                self.hangup_deadline = None
+        self.save_calls()
+
+    def cs_ready(self):
+        # GET_CS_REG_STATE: byte 0 is the registration state (1 home, 5 roaming).
+        if self.client.request(0x0700)[:1] not in (b'\x01', b'\x05'):
+            raise RuntimeError('Cellular service is not registered yet')
 
     def ready(self, feature):
         reg = self.registration()
@@ -176,6 +299,12 @@ class Service:
             audio, self.audio = self.audio, None
             audio.__exit__(None, None, None)
         self.muted = False
+
+    def release(self, call):
+        if self.cs:
+            self.client.request(0x0008, cs_calls.hangup_payload(call['modem_id']), timeout=10)
+        else:
+            self.client.request(0x0d03, bytes([call['modem_id'], 1, 0]))
 
     def live(self):
         return [c for c in self.calls.values() if c['state'] != 'terminated']
@@ -241,6 +370,9 @@ class Service:
             for path in paths.INBOX.glob('*.sit'):
                 self.ingest(path)
             self.publish()
+        elif ident == 0x010f:
+            # IND_SIM_SMS_STORAGE_FULL: texts are kept here, not on the SIM.
+            sms_memory_available(self.client)
         elif ident == 0x0d05:
             record_registration(packet)
             self.publish()
@@ -253,6 +385,20 @@ class Service:
         elif ident == 0x0210:
             # IND_SIM_STATUS_CHANGED carries nothing we read: poll again.
             self.next_poll = 0
+        elif ident == 0x0010 and self.cs:
+            # IND_CALL_PRESENT_IND: the modem holds an incoming CS call until
+            # the AP confirms it (stock's SetCallConfirmHandler sends
+            # CALL_CONFIRM, BuildSendCallConfirm: a bare header); without it
+            # ANSWER showed the call active here while the caller kept
+            # ringing into voicemail (raven, 2026-10-20).
+            try:
+                self.client.request(0x000f, timeout=5)
+                print('Incoming call confirmed to the modem', flush=True)
+            except (ModemError, TimeoutError) as failure:
+                print(f'CALL_CONFIRM refused ({failure})', flush=True)
+            self.cs_sync()
+        elif ident in (0x0009, 0x000a) and self.cs:
+            self.cs_sync()
         elif ident == 0x0d01:
             if len(packet) < 13:
                 raise ValueError('Truncated incoming call')
@@ -302,7 +448,17 @@ class Service:
         except (ModemError, TimeoutError) as error:
             print('Radio state poll failed:', type(error).__name__, flush=True)
         try:
-            ps = self.client.request(0x0701, timeout=5)
+            try:
+                self.signal = signal_strength.bars(self.client.request(0x0900, timeout=5))
+            except (ModemError, TimeoutError):
+                pass
+            if self.cs_only():
+                # The SIM that isn't the data SIM has no packet service on
+                # purpose: show its CS registration (state at 0, RAT at 2).
+                cs = self.client.request(0x0700, timeout=5)
+                ps = bytes(cs[:1]) + b'\0\0' + bytes(cs[2:3]) if len(cs) >= 3 else cs
+            else:
+                ps = self.client.request(0x0701, timeout=5)
             if len(ps) >= 4:
                 self.net['reg'] = {0: 'not-registered', 1: 'home', 2: 'searching', 3: 'denied',
                                    5: 'roaming'}.get(ps[0], 'unknown')
@@ -339,7 +495,13 @@ class Service:
             if prior['digest'] != digest:
                 raise ValueError('Send request identifier was reused')
             return dict(prior)
-        self.ready(2)
+        # Without IMS ([network] ims = no) a text goes over the CS domain
+        # (SMS over SGs on LTE): it needs CS registration, not IMS's.
+        cs = not self.settings['network'].getboolean('ims', True)
+        if cs:
+            self.cs_ready()
+        else:
+            self.ready(2)
         smsc = self.client.request(0x0108)
         if len(smsc) != 13 or not 1 <= smsc[0] <= 12:
             raise RuntimeError('Carrier SMS configuration is unavailable')
@@ -350,15 +512,28 @@ class Service:
         error = ''
         try:
             for pdu in pdus:
-                payload = bytearray(260)
-                payload[:13] = smsc
-                payload[13] = len(pdu)
-                payload[14:14+len(pdu)] = pdu
-                result = self.client.request(0x0d1b, bytes(payload), timeout=90)
+                if cs:
+                    # SEND_SMS (MODEM-SIT-RESEARCH 0x0100): u8 domain (0), the
+                    # SMSC as GET_SMSC_ADDR gives it (length, 12 bytes), u8
+                    # TPDU length, the TPDU; 259 bytes. The reply has the
+                    # network's cause at 249, as AIMS_SEND_SMS's does (stock's
+                    # ProtocolSendSmsRespAdapter); the SIT error stays 0.
+                    payload = bytearray(259)
+                    payload[1:14] = smsc
+                    payload[14] = len(pdu)
+                    payload[15:15+len(pdu)] = pdu
+                    result = self.client.request(0x0100, bytes(payload), timeout=90)
+                else:
+                    payload = bytearray(260)
+                    payload[:13] = smsc
+                    payload[13] = len(pdu)
+                    payload[14:14+len(pdu)] = pdu
+                    result = self.client.request(0x0d1b, bytes(payload), timeout=90)
                 if len(result) < 253:
                     raise TimeoutError('Unknown SMS response')
                 cause = struct.unpack_from('<I', result, 249)[0]
                 if cause:
+                    print(f'SMS refused by the network: cause {cause}', flush=True)
                     raise ModemError(cause, b'')
                 completed += 1
                 self.db.execute('UPDATE outgoing SET completed=? WHERE id=?', (completed, key))
@@ -380,13 +555,18 @@ class Service:
         voice = reg.get('state') == 2 and reg.get('features', 0) & 1 != 0
         sms = reg.get('state') == 2 and reg.get('features', 0) & 2 != 0
         data = bearer_paths(1)[0].exists()
+        modem_registered = self.net['reg'] in ('home', 'roaming')
         modem = dict(present=True, stage=self.current_stage, ready=voice,
                      state='registered' if self.net['reg'] in ('home', 'roaming') else 'searching',
                      registration=self.net['reg'], tech=self.net['rat'],
                      operator=self.net['operator'] or self.net['plmn'],
                      plmn=self.net['plmn'], operator_name=self.net['operator'],
-                     voice=voice, sms=sms, data=data, signal=0, audio=True,
-                     radio=self.radio, sim=dict(self.sim),
+                     voice=voice, sms=sms, data=data,
+                     signal=self.signal if modem_registered else 0,
+                     generation=signal_strength.generation(self.net['rat']) if modem_registered else '',
+                     audio=True,
+                     radio=self.radio, sim=dict(self.sim, number=self.stack() + 1,
+                                                label=paths.sim_label(self.stack(), self.settings)),
                      emergency_numbers=list(EMERGENCY + (EMERGENCY_NO_SIM if self.sim['state'] == 'absent' else ())))
         calls = [{k: v for k, v in c.items() if k != 'modem_id'} for c in self.calls.values()]
         if public:
@@ -481,15 +661,18 @@ class Service:
             return dict(screen_on=self.screen_on)
         if action == 'radio':
             # The rollback for a running registration short of a reboot:
-            # AT+CFUN, as the start-up uses. Bearers and IMS go with it.
+            # the same switch as the start-up ([network] radio). Bearers and
+            # IMS go with it.
             on = request.get('on')
             if type(on) is not bool:
                 raise ValueError('Radio state must be boolean')
             if not on and self.live():
                 raise RuntimeError('Call in progress')
-            radio(on)
+            switch_radio(self.client, self.settings['network'], on)
             self.next_poll = 0
             return dict(radio='on' if on else 'off')
+        if action == 'sim-pin':
+            return self.sim_pin(request.get('pin'), request.get('last_try') is True)
         if action == 'power-status':
             return dict(screen_on=self.screen_on, indications=dict(self.indication_counts))
         if action == 'status':
@@ -510,7 +693,10 @@ class Service:
                                   (request.get('request_id'),)).fetchone()
             return dict(row) if row else dict(state='unknown', error='Send outcome has not been confirmed')
         if action == 'dial':
-            self.ready(1)
+            if self.cs:
+                self.cs_ready()
+            else:
+                self.ready(1)
             if self.live():
                 raise RuntimeError('End the current call before placing another')
             destination = number(request['number'], voice=True)
@@ -521,7 +707,11 @@ class Service:
             call = self.new_call(destination, 'outgoing', 'dialing')
             self.pending = call['id']
             try:
-                self.client.request(0x0d00, dial_payload(destination), timeout=8)
+                if self.cs:
+                    self.client.request(0x0001, cs_calls.dial_payload(destination), timeout=15)
+                    self.cs_sync()
+                else:
+                    self.client.request(0x0d00, dial_payload(destination), timeout=8)
             except ModemError:
                 call['state'] = 'terminated'
                 call['reason'] = 'error'
@@ -554,16 +744,23 @@ class Service:
                     raise RuntimeError('Call is not ringing')
                 if len(self.live()) != 1:
                     raise RuntimeError('Call waiting is not supported yet')
-                self.audio_start()
+                # CS: the voice path starts when the call goes active
+                # (cs_sync); started before ANSWER it ran with no call
+                # behind it and the caller heard noise at the pick-up.
+                if not self.cs:
+                    self.audio_start()
                 try:
-                    # Ordinary voice, audio send/receive, no video.
-                    self.client.request(0x0d02, struct.pack('<HHH', 1, 1, 0))
+                    if self.cs:
+                        self.client.request(0x0004)  # ANSWER, no payload
+                    else:
+                        # Ordinary voice, audio send/receive, no video.
+                        self.client.request(0x0d02, struct.pack('<HHH', 1, 1, 0))
                 except BaseException:
                     self.hangup_deadline = time.monotonic() + 12
                     raise
             else:
                 self.hangup_deadline = time.monotonic() + 12
-                self.client.request(0x0d03, bytes([call['modem_id'], 1, 0]))
+                self.release(call)
             self.pump()
             return {}
         if action == 'audio':
@@ -583,6 +780,9 @@ class Service:
                 raise RuntimeError('Touch tones require an active call')
             if not isinstance(keys, str) or not re.fullmatch(r'[0-9*#]{1,32}', keys):
                 raise ValueError('Invalid touch tones')
+            if self.cs:
+                self.client.request(0x0003, cs_calls.dtmf_payload(keys))
+                return {}
             # Stock SendDtmf: call ID, one-shot type=0, ASCII digit.
             for key in keys:
                 self.client.request(0x0d0a, bytes([call['modem_id'], 0, ord(key)]))
@@ -617,9 +817,13 @@ def notify(message):
         sock.sendall(message.encode())
 
 
-def serve_one(service, connection, clients):
+STARTUP_ACTIONS = {'status', 'sim-pin'}
+
+
+def serve_one(service, connection, clients, only=None):
     """One request on one connection. True if the connection became a
-    subscriber (the caller then keeps it open)."""
+    subscriber (the caller then keeps it open). With `only`, any other
+    action is refused (start-up serves STARTUP_ACTIONS)."""
     connection.settimeout(2)
     try:
         _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
@@ -634,6 +838,8 @@ def serve_one(service, connection, clients):
             if len(body) > 32768:
                 raise ValueError('Phone request too large')
         request = json.loads(body.split(b'\n', 1)[0])
+        if only is not None and not (isinstance(request, dict) and request.get('action') in only):
+            raise RuntimeError('The modem is still starting')
         if isinstance(request, dict) and request.get('action') == 'subscribe':
             if len(service.subscribers) >= SUBSCRIBERS:
                 raise RuntimeError('Too many subscribers')
@@ -695,11 +901,21 @@ def main():
     settings = paths.config()
     paths.private_dir(paths.RUN)
     paths.private_dir(paths.STATE)
-    if not cp.online():
-        raise SystemExit('CP is not ONLINE: start omamobile-modem.service first')
+    # The modem unit is Type=simple: at boot sitd starts while the CP is
+    # still booting (about 10-20 s). Wait for it rather than fail.
+    deadline = time.monotonic() + (180 if args.bringup else 0)
+    while not cp.online():
+        if time.monotonic() >= deadline:
+            raise SystemExit('CP is not ONLINE: start omamobile-modem.service first')
+        time.sleep(1)
     if args.probe:
         return probe()
-    client = Sit(allow_sms=True, allow_calls=True)
+    # One SIT channel per modem stack (RIL socket): umts_ipc0, umts_ipc1.
+    stack = settings['network'].getint('stack', 0)
+    if stack not in (0, 1):
+        raise SystemExit('[network] stack is 0 or 1')
+    device = os.environ.get('OMAMOBILE_SIT_DEVICE') or f'/dev/umts_ipc{stack}'
+    client = Sit(allow_sms=True, allow_calls=True, allow_pin=True, device=device)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     service = None
     stopping = False
@@ -718,10 +934,7 @@ def main():
         service.publish()
         for sms in paths.INBOX.glob('*.sit'):
             service.ingest(sms)
-        if args.bringup:
-            from bringup import start
-            start(service, settings, lambda: stopping)
-        service.stage('running')
+        # The socket opens before start-up, which can wait on a SIM PIN.
         SOCKET.unlink(missing_ok=True)
         server.bind(str(SOCKET))
         server.listen(16)
@@ -734,6 +947,23 @@ def main():
             paths.RUN.chmod(0o710)
             os.chown(SOCKET, 0, gid)
             SOCKET.chmod(0o660)
+
+        def serve_startup():
+            server.settimeout(0)
+            try:
+                connection, _ = server.accept()
+            except (BlockingIOError, socket.timeout):
+                return
+            finally:
+                server.settimeout(.1)
+            if not serve_one(service, connection, clients, STARTUP_ACTIONS):
+                connection.close()
+        service.idle = serve_startup
+        if args.bringup:
+            from bringup import start
+            start(service, settings, lambda: stopping)
+        service.stage('running')
+        service.idle = lambda: None
         notify('READY=1\nSTATUS=registered')
         print('Calls and SMS service ready', flush=True)
         next_cp_check = 0
@@ -764,7 +994,7 @@ def main():
                 for call in service.live():
                     if call['modem_id'] is not None:
                         try:
-                            client.request(0x0d03, bytes([call['modem_id'], 1, 0]))
+                            service.release(call)
                         except (OSError, RuntimeError):
                             pass
                 end = time.monotonic() + 8

@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+import data_network
 from data_network import Resolver, configuration, counters, guarded, looks_silent
 
 class ResolverTests(unittest.TestCase):
@@ -40,3 +42,36 @@ class WatchTests(unittest.TestCase):
     def test_other_errors_still_end_the_service(self):
         def broken(): raise KeyError('dev')
         with self.assertRaises(KeyError): guarded(broken)
+
+
+class RecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        root = Path(self.dir.name)
+        self.patches = [patch.object(data_network.paths, 'RUN', root),
+                        patch.object(data_network, 'RECOVERY', root / 'bearer-recovery'),
+                        patch.object(data_network.paths, 'SIM', 2)]
+        for p in self.patches:
+            p.start()
+        self.root = root
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.dir.cleanup()
+
+    def test_restarts_the_data_sims_sitd_once_per_gap(self):
+        with patch.object(data_network.subprocess, 'run') as run:
+            self.assertTrue(data_network.recover(now=lambda: 1000.0))
+            self.assertFalse(data_network.recover(now=lambda: 1300.0))
+            self.assertTrue(data_network.recover(now=lambda: 1700.0))
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args[0][0], ['systemctl', 'restart', '--no-block', 'omamobile-sitd-2.service'])
+
+    def test_never_during_a_call(self):
+        import json
+        (self.root / 'state.json').write_text(json.dumps({'calls': [{'state': 'active'}]}))
+        with patch.object(data_network.subprocess, 'run') as run:
+            self.assertFalse(data_network.recover(now=lambda: 1000.0))
+        run.assert_not_called()
+

@@ -20,14 +20,23 @@ from paths import IPC, RUN, open_channel, private_dir
 from sit_names import NAMES
 
 # Data/radio/IMS lifecycle, display state, read-only status, and incoming SMS
-# ACK. No SIM I/O, PIN, subscription, APDU or vendor NV requests.
-ALLOWED = {0x0000, 0x0102, 0x0108, 0x0200, 0x0600, 0x0601, 0x0602, 0x0603, 0x0613,
+# ACK. No SIM I/O, APDU or vendor NV requests, and of the subscription
+# requests only activating the SIM in use; VERIFY_SIM_PIN
+# only behind allow_pin (the sim-pin action), never a PIN change or lock.
+ALLOWED = {0x0000, 0x0002, 0x0102, 0x0108, 0x010a, 0x0200, 0x0600, 0x0601, 0x0602, 0x0603, 0x0613,
            0x061a, 0x061b, 0x0625, 0x0700, 0x0701, 0x0702, 0x0703, 0x0704, 0x070a,
            0x070b, 0x0710, 0x0711, 0x0800, 0x0801, 0x0748, 0x0749, 0x0750, 0x0902,
            0x091b, 0x0928, 0x0930, 0x0953, 0x0956, 0x0957, 0x0d07, 0x0d08, 0x0d1d,
-           0x0d38, 0x0d39, 0x0d3a}
-SMS = {0x0d1b}                              # AIMS_SEND_SMS
-CALLS = {0x0d00, 0x0d02, 0x0d03, 0x0d0a}    # AIMS_DIAL, _ANSWER, _HANGUP, _SEND_DTMF
+           0x0d38, 0x0d39, 0x0d3a,
+           0x024d, 0x0250, 0x093f,  # slot status and mapping, modem config ([network] sim_slot, radio = sit)
+           0x0900,  # GET_SIGNAL_STRENGTH (read-only)
+           0x0740,  # SET_PREFERRED_DATA_MODEM: which stack gets packet service (stacks = 2)
+           0x0249}  # SET_UICC_SUBSCRIPTION, activate only: the selected SIM's subscription, as stock does
+SMS = {0x0d1b, 0x0100}                      # AIMS_SEND_SMS, SEND_SMS (CS, ims = no)
+CALLS = {0x0d00, 0x0d02, 0x0d03, 0x0d0a,    # AIMS_DIAL, _ANSWER, _HANGUP, _SEND_DTMF
+         0x0001, 0x0003, 0x0004, 0x0008,    # DIAL, DTMF, ANSWER, HANGUP (CS, ims = no)
+         0x000f}                            # CALL_CONFIRM: an incoming CS call presented
+PIN = {0x0201}                              # VERIFY_SIM_PIN, only from the sim-pin action
 
 # The research note's do-not-send list, by name, plus the VSIM (0x0e) and
 # satellite (0x13) families.
@@ -55,19 +64,26 @@ class ModemError(RuntimeError):
         self.payload = payload  # private; never include payload in str/repr
 
 
-def check(ident, *, sms=False, calls=False):
+def check(ident, *, sms=False, calls=False, pin=False):
     if ident in DENIED or (ident >> 8) in DENIED_FAMILIES:
         raise ValueError('request on the do-not-send list')
-    if not (ident in ALLOWED or (sms and ident in SMS) or (calls and ident in CALLS)):
+    if not (ident in ALLOWED or (sms and ident in SMS) or (calls and ident in CALLS)
+            or (pin and ident in PIN)):
         raise ValueError('request outside the allow-list')
 
 
 class Sit:
-    def __init__(self, *, allow_sms=False, allow_calls=False, device=None):
+    def __init__(self, *, allow_sms=False, allow_calls=False, allow_pin=False, device=None):
         self.allow_sms = allow_sms
         self.allow_calls = allow_calls
+        self.allow_pin = allow_pin
         private_dir(RUN)
-        self.lock = os.open(RUN / 'ipc0.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        # One owner per channel (umts_ipc0, umts_ipc1): the lock is named
+        # after it; umts_ipc0 keeps the old name.
+        channel = os.path.basename(device or IPC)
+        lock = 'ipc0.lock' if channel in ('umts_ipc0', '') or channel == os.path.basename(IPC) \
+            else channel.replace(':', '_') + '.lock'
+        self.lock = os.open(RUN / lock, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.fd = open_channel(device or IPC)
@@ -111,7 +127,10 @@ class Sit:
 
     def request(self, ident, payload=b'', timeout=8):
         check(ident, sms=getattr(self, 'allow_sms', False),
-              calls=getattr(self, 'allow_calls', False))
+              calls=getattr(self, 'allow_calls', False),
+              pin=getattr(self, 'allow_pin', False))
+        if ident == 0x0249 and payload != b'\x01':
+            raise ValueError('SET_UICC_SUBSCRIPTION only activates')
         self.token = (self.token + 1) & 0xffffffff
         data = struct.pack('<BBHHIBB', 0, 0, ident, 12 + len(payload), self.token, 0, 0) + payload
         if os.write(self.fd, data) != len(data):

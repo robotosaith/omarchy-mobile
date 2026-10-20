@@ -18,6 +18,10 @@ os.environ.update({
     'OMAMOBILE_SIT_DEVICE': 'unix:' + os.path.join(TMP, 'ipc0'),
     'OMAMOBILE_SIT_ROUTER': 'unix:' + os.path.join(TMP, 'router'),
     'OMAMOBILE_SIT_BOOT': 'none',
+    'OMAMOBILE_SIT_SLOTS': os.path.join(TMP, 'run', 'slots.json'),
+    'OMAMOBILE_SIT_SIM': '1',
+    'OMAMOBILE_SIMS_CONF': os.path.join(TMP, 'sims.conf'),
+    'OMAMOBILE_SIT_DEVICE_DEFAULTS': os.path.join(TMP, 'modem-sit.d'),
 })
 os.makedirs(os.path.join(TMP, 'run'), mode=0o700)
 if LIB not in sys.path:

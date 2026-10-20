@@ -21,9 +21,10 @@ def nr_mode(client, restore=False):
         if len(target) != 1:
             raise RuntimeError('invalid saved NR mode')
     else:
-        if SAVED_NR.exists():
-            raise RuntimeError('NR experiment already active')
-        private_write(SAVED_NR, current)
+        # A restarted sitd finds the original from its first run (the run
+        # directory is preserved): keep that one, the modem's own setting.
+        if not SAVED_NR.exists():
+            private_write(SAVED_NR, current)
         target = b'\0'
     client.request(0x0748, target, timeout=30)
     if client.request(0x0749) != target:

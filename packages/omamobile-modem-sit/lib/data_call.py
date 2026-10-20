@@ -74,7 +74,8 @@ def private_write(path, data):
         out.write(data)
 
 
-def setup_payload(cid, radio_technology, pdu_session, apn, *, ims=False, ip_type='ipv4v6'):
+def setup_payload(cid, radio_technology, pdu_session, apn, *, ims=False, ip_type=None):
+    ip_type = ip_type or ('ipv6' if ims else 'ipv4v6')
     # Absolute request offsets below include the 12-byte request header.
     check_apn(apn)
     full = bytearray(983)
@@ -85,7 +86,7 @@ def setup_payload(cid, radio_technology, pdu_session, apn, *, ims=False, ip_type
     encoded = apn.encode('ascii')
     full[16:16 + len(encoded)] = encoded
     full[0xd9] = 0  # no authentication
-    full[0xda] = IP_TYPES['ipv6'] if ims else IP_TYPES[ip_type]
+    full[0xda] = IP_TYPES[ip_type]  # IMS: [network] ims_ip_type (ipv6 by default)
     full[0xdb] = 2 if ims else 0  # IPv6 P-CSCF request
     # No handover addresses, roaming override or slice.
     # MTU at 0xf1 stays zero (network/default choice).
@@ -117,21 +118,40 @@ def allow_data(client):
     print('PS service permission enabled', flush=True)
 
 
-def provision_default_profile(client, apn, ip_type='ipv4v6'):
-    # Stock BuildSetDataProfile, 246-byte request. This configures the
-    # network APN profile, not a SIM subscription or UICC operation.
+# Android's data profile IDs and APN-type bits (ApnSetting): default 0, IMS 2.
+PROFILE_DEFAULT, PROFILE_IMS = 0, 2
+APN_TYPE_DEFAULT, APN_TYPE_IMS = 1, 64
+
+
+def provision_profile(client, apn, ip_type='ipv4v6', *, profile=PROFILE_DEFAULT,
+                      types=APN_TYPE_DEFAULT, name='default'):
+    # Stock BuildSetDataProfile, 246-byte request, one profile per request.
+    # This configures the network APN profile, not a SIM subscription or UICC
+    # operation.
     encoded = check_apn(apn).encode('ascii')
     full = bytearray(246)
-    struct.pack_into('<I', full, 12, 0)  # Android default profile ID
+    struct.pack_into('<I', full, 12, profile)  # Android profile ID
     full[16:16 + len(encoded)] = encoded
     full[0x75] = full[0x76] = IP_TYPES[ip_type]  # home/roaming IP type
     full[0xe9] = 1  # enabled
-    struct.pack_into('<I', full, 0xea, 1)  # default APN-type bitmap
+    struct.pack_into('<I', full, 0xea, types)  # APN-type bitmap
     client.request(0x0613, bytes(full[12:]), timeout=30)
-    print('default data profile accepted', flush=True)
+    print(name, 'data profile accepted', flush=True)
 
 
-def activate(client, apn, *, ims=False, ip_type='ipv4v6', lte_access=False):
+def provision_default_profile(client, apn, ip_type='ipv4v6'):
+    provision_profile(client, apn, ip_type)
+
+
+def provision_ims_profile(client, apn='ims', ip_type='ipv4v6'):
+    # Stock Android hands the modem every carrier profile, IMS's among them.
+    # Without it raven's modem refused the IMS bearer with status 2253
+    # (COMPANION_IFACE_IN_USE): it had only the internet profile to use.
+    provision_profile(client, apn, ip_type, profile=PROFILE_IMS, types=APN_TYPE_IMS, name='IMS')
+
+
+def activate(client, apn, *, ims=False, ip_type=None, lte_access=False):
+    ip_type = ip_type or ('ipv6' if ims else 'ipv4v6')
     requested_cid = 2 if ims else 1
     state_path, response_path = paths(requested_cid)
     state = client.request(0x0701)
@@ -139,6 +159,25 @@ def activate(client, apn, *, ims=False, ip_type='ipv4v6', lte_access=False):
         raise RuntimeError('PS network is not registered')
     calls = call_ids(client.request(0x0602))
     owned = owned_ids()
+    if not ims and state_path.exists() and requested_cid not in calls:
+        # A record from a previous run whose bearer the modem no longer
+        # lists (the restart cycled the radio): release its PDU session and
+        # drop it.
+        try:
+            session = json.loads(state_path.read_text()).get('session', 0)
+            if 1 <= session <= 15:
+                client.request(0x061b, struct.pack('<i', session))
+        except (OSError, ValueError, RuntimeError, TimeoutError):
+            pass
+        state_path.unlink(missing_ok=True)
+        response_path.unlink(missing_ok=True)
+        print(f'Stale data bearer record CID {requested_cid} cleared', flush=True)
+        owned = owned_ids()
+    if not ims and state_path.exists() and requested_cid in calls and calls == owned:
+        # sitd restarted: the bearer from its previous run is still up and
+        # still ours (the run directory is preserved). Keep it.
+        print(f'Data bearer CID {requested_cid} from the previous run kept', flush=True)
+        return None
     if state_path.exists() or requested_cid in calls or calls != owned:
         raise RuntimeError('existing target or unresolved bearer ownership')
     allow_data(client)
@@ -194,7 +233,8 @@ def deactivate(client, cid=1):
     owned = json.loads(state_path.read_text())
     if owned.get('cid') != cid or not 1 <= owned.get('session', 0) <= 15:
         raise RuntimeError('invalid bearer ownership record')
-    flags = int(Path(f"/sys/class/net/rmnet{owned['cid'] - 1}/flags").read_text(), 16)
+    import paths as sit_paths
+    flags = int(Path(f"/sys/class/net/{sit_paths.interface(owned['cid'])}/flags").read_text(), 16)
     if flags & 1:
         raise RuntimeError('remove host data configuration first')
     # Stock BuildDeactDataCall: CID and normal-release reason.

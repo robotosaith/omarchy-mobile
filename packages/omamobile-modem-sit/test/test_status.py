@@ -55,6 +55,9 @@ class StatusAndSubscriptionTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.paths = patch.object(paths, 'RUN', self.root)
         self.paths.start()
+        self.slots = patch.object(paths, 'SLOTS', self.root / 'slots.json')
+        self.slots.start()
+        self.addCleanup(self.slots.stop)
         self.db = app_service.database(self.root / 'db')
         self.client = Mock()
         self.client.next_indication.return_value = None
@@ -69,18 +72,68 @@ class StatusAndSubscriptionTests(unittest.TestCase):
 
     def poll_with(self, sim, radio, ps=bytes(4)):
         replies = {0x0200: sim, 0x0801: struct.pack('<I', radio), 0x0701: ps,
-                   0x0702: bytearray(0x77 - 12)}
+                   0x0702: bytearray(0x77 - 12), 0x0900: b''}
         self.client.request.side_effect = lambda ident, *a, **k: replies[ident]
         self.service.next_poll = 0
         self.service.poll()
+
+    def test_data_follows_the_sims_conf_with_two_sims(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / 'dev.conf').write_text('[network]\nstacks = 2\n')
+            (Path(d) / 'sims.conf').write_text('[default]\ndata = 2\n')
+            (Path(d) / 'etc.conf').write_text('[network]\napn = x\n')
+            with patch.object(app_service.paths, 'DEVICE_DEFAULTS', Path(d)), \
+                 patch.object(app_service.paths, 'SIMS_CONF', Path(d) / 'sims.conf'):
+                with patch.object(app_service.paths, 'SIM', 1):
+                    self.assertEqual(app_service.paths.config(Path(d) / 'etc.conf')['network']['data'], 'no')
+                with patch.object(app_service.paths, 'SIM', 2):
+                    self.assertEqual(app_service.paths.config(Path(d) / 'etc.conf')['network']['data'], 'yes')
+                (Path(d) / 'etc.conf').write_text('[network]\ndata = yes\n')
+                with patch.object(app_service.paths, 'SIM', 1):
+                    self.assertEqual(app_service.paths.config(Path(d) / 'etc.conf')['network']['data'], 'yes')
+
+    def test_interface_is_cid_based(self):
+        import os
+        self.assertEqual(app_service.paths.interface(1, stack=1), 'rmnet0')
+        self.assertEqual(app_service.paths.interface(2, stack=0), 'rmnet1')
+        with patch.dict(os.environ, {'OMAMOBILE_SIT_IFSTART': '15'}):
+            self.assertEqual(app_service.paths.interface(1), 'rmnet15')
+
+    def test_device_defaults_come_before_etc(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / 'raven.conf').write_text('[network]\nslot_names = tray, eSIM\napn = device\n')
+            (Path(d) / 'etc.conf').write_text('[network]\napn = mine\n')
+            with patch.object(app_service.paths, 'DEVICE_DEFAULTS', Path(d)):
+                settings = app_service.paths.config(Path(d) / 'etc.conf')
+        self.assertEqual(settings['network']['slot_names'], 'tray, eSIM')
+        self.assertEqual(settings['network']['apn'], 'mine')
+
+    def test_sim_label_names_the_slot(self):
+        import json, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d, patch.object(app_service.paths, 'SLOTS', Path(d) / 'slots.json'):
+            settings = app_service.paths.config('/nonexistent')
+            self.assertEqual(app_service.paths.sim_label(1, settings), 'SIM 2')
+            (Path(d) / 'slots.json').write_text(json.dumps(
+                [dict(card=True, active=True, logical=0), dict(card=True, active=True, logical=1)]))
+            self.assertEqual(app_service.paths.sim_label(1, settings), 'SIM 2 (slot 2)')
+            settings['network']['slot_names'] = 'tray, eSIM'
+            self.assertEqual(app_service.paths.sim_label(0, settings), 'SIM 1 (tray)')
+            self.assertEqual(app_service.paths.sim_label(1, settings), 'SIM 2 (eSIM)')
+            settings['network']['label'] = 'Work'
+            self.assertEqual(app_service.paths.sim_label(1, settings), 'Work')
 
     def test_poll_reads_sim_and_radio_read_only(self):
         self.poll_with(bytes(3), 3)
         modem = self.service.status()['modem']
         self.assertEqual((modem['sim'], modem['radio'], modem['registration']),
-                         (dict(state='absent'), 'off', 'not-registered'))
+                         (dict(state='absent', number=1, label='SIM 1'), 'off', 'not-registered'))
         self.assertEqual(modem['emergency_numbers'], ['112', '911', '000', '08', '110', '118', '119', '999'])
-        self.assertEqual([c.args[0] for c in self.client.request.call_args_list], [0x0200, 0x0801, 0x0701])
+        self.assertEqual([c.args[0] for c in self.client.request.call_args_list], [0x0200, 0x0801, 0x0900, 0x0701])
         self.poll_with(sim_payload(1, [(2, 5, 3, 10)]), 2)
         modem = self.service.status()['modem']
         self.assertEqual((modem['sim']['state'], modem['radio']), ('ready', 'on'))
@@ -90,7 +143,7 @@ class StatusAndSubscriptionTests(unittest.TestCase):
         self.client.request.side_effect = TimeoutError()
         self.service.next_poll = 0
         self.service.poll()
-        self.assertEqual(self.service.status()['modem']['sim'], dict(state='unknown'))
+        self.assertEqual(self.service.status()['modem']['sim'], dict(state='unknown', number=1, label='SIM 1'))
 
     def test_radio_indication(self):
         self.service.next_poll = 99e9

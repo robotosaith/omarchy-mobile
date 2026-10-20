@@ -58,14 +58,14 @@ vars() {
   cat > "$t/vars" <<EOF
 product:${1:-testdev}
 unlocked:${2:-yes}
-current-slot:b
+current-slot:${4:-b}
 version-bootloader:cloudripper-17.0-15199429
 ${3:-}
 EOF
 }
 answers() {
   # user name(s), password twice, host, time zone, name, email, Wi-Fi, key, confirmation
-  printf '%s\n' "${USERS:-alice}" 1234 1234 "" UTC "Alice Example" "" "${SSID:-Home Net}" "${PSK:-correct horse}" "" "${CONFIRM:-testdev}"
+  printf '%s\n' "${USERS:-alice}" 1234 1234 "" UTC "Alice Example" "" "${SSID:-Home Net}" "${PSK:-correct horse}" "${APN-}" "" "${CONFIRM:-testdev}"
 }
 install() {
   : > "$t/fastboot.log"
@@ -116,6 +116,7 @@ grep -qx 'CREDENTIAL=pin' <<<"$conf" || fail "a numeric password is a PIN"
 grep -qx 'HOSTNAME=alice-phone' <<<"$conf" || fail "the default host name is <user>-phone"
 grep -qx 'WIFI_SSID=Home Net' <<<"$conf" && grep -qx 'WIFI_PSK=correct horse' <<<"$conf" || fail "the Wi-Fi network"
 grep -qxF "SSH_KEY=$(cat "$t/home/.ssh/id_ed25519.pub")" <<<"$conf" || fail "the SSH key"
+grep -q '^SIM1_APN=' <<<"$conf" && fail "no APN line when the APN was skipped"
 debugfs -R 'stat /etc/omamobile/firstboot.conf' "$flashed" 2>/dev/null | grep -q 'Mode:  0600' || fail "firstboot.conf is root-only"
 debugfs -R 'stat /etc/omamobile/firstboot.conf' "$flashed" 2>/dev/null | grep -q 'User:     0   Group:     0' || fail "firstboot.conf belongs to root"
 [[ $(debugfs -R 'cat /root/.ssh/authorized_keys' "$flashed" 2>/dev/null) == "$(cat "$t/home/.ssh/id_ed25519.pub")" ]] || fail "root's authorized_keys"
@@ -138,11 +139,14 @@ vars "" no $'version-bootloader-a:x\nversion-bootloader-b:x'
 refuse "a locked bootloader"; grep -q locked "$t/out" || fail "says the bootloader is locked"
 vars "" "" $'version-bootloader-a:cloudripper-17.0-1\nversion-bootloader-b:cloudripper-16.0-9'
 refuse "different bootloader slots"; grep -q 'slots differ' "$t/out" || fail "says the slots differ"
-vars
+vars "" "" "" a
 refuse "an unknown other slot"; grep -q -- '--bootloader-slots-match' "$t/out" || fail "says how to confirm the other slot"
 refuse "a wrong confirmed version" --bootloader-slots-match cloudripper-16.0-9
 install --dry-run --bootloader-slots-match cloudripper-17.0-15199429 || { cat "$t/out"; fail "a confirmed matching version passes"; }
-pass "refuses another phone, a locked bootloader, mismatched or unconfirmed bootloader slots"
+vars
+install --dry-run || { cat "$t/out"; fail "already on slot b, no confirmation needed"; }
+grep -q "activating b switches nothing" "$t/out" || fail "says why slot b needs no confirmation"
+pass "refuses another phone, a locked bootloader, mismatched or unconfirmed bootloader slots (from slot a)"
 
 vars "" "" $'version-bootloader-a:x\nversion-bootloader-b:x'
 for name in root omamobile omarchy alarm omandroid; do

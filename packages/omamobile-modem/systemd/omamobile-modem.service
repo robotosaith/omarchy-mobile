@@ -9,7 +9,7 @@
 # powers the CP off before rfsd goes: one recovered UFS error-handler pass.
 # Never restart it: that is a CP power cycle on a CP that was already up.
 [Unit]
-Description=Omarchy Mobile modem (S5300: rfsd and cbd on RAM copies of NV)
+Description=Omarchy Mobile modem (S5300 or S5123: rfsd and cbd on RAM copies of NV)
 After=systemd-modules-load.service omamobile-aoc.service omamobile-audio.service
 ConditionPathExists=/usr/lib/omamobile-vendor/modem/root
 

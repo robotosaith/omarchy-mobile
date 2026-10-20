@@ -210,6 +210,18 @@ class Registered(BridgeTests):
         self.sitd.handlers['radio'] = lambda r: (_ for _ in ()).throw(FakeRefusal('Call in progress'))
         self.assertEqual(self.error_of(MODEM0, mm.MODEM, 'Enable', 'b', (True,)), mm.ERROR_PREFIX + 'Failed')
 
+    def test_send_pin_goes_to_sitd(self):
+        sim = self.modem('Sim')
+        self.sitd.handlers['sim-pin'] = lambda r: dict(sim=dict(state='ready'))
+        self.client.call(sim, mm.SIM, 'SendPin', 's', ('0000',))
+        self.assertEqual(self.sitd.requests, [dict(action='sim-pin', pin='0000')])
+        self.sitd.handlers['sim-pin'] = lambda r: (_ for _ in ()).throw(FakeRefusal('Wrong PIN'))
+        self.assertEqual(self.error_of(sim, mm.SIM, 'SendPin', 's', ('1111',)),
+                         mm.MM + '.Error.MobileEquipment.IncorrectPassword')
+        self.sitd.handlers['sim-pin'] = lambda r: (_ for _ in ()).throw(
+            FakeRefusal('One PIN try left: a wrong PIN locks the SIM behind its PUK'))
+        self.assertEqual(self.error_of(sim, mm.SIM, 'SendPin', 's', ('1111',)), mm.ERROR_PREFIX + 'Failed')
+
     def test_outgoing_call(self):
         def dial(request):
             self.sitd.status['calls'] = [call('100', 'dialing', 'outgoing', request['number'])]
@@ -376,7 +388,8 @@ class Registered(BridgeTests):
                 (MODEM0, mm.MODEM_3GPP, 'Register', 's', ('',)),
                 (MODEM0, mm.MODEM_3GPP, 'Scan', None, ()),
                 (MODEM0, mm.SIMPLE, 'Connect', 'a{sv}', ({},)),
-                (sim, mm.SIM, 'SendPin', 's', ('0000',))):
+                (sim, mm.SIM, 'SendPuk', 'ss', ('00000000', '0000')),
+                (sim, mm.SIM, 'ChangePin', 'ss', ('0000', '1111'))):
             self.assertEqual(self.error_of(path, interface, method, signature, args), mm.ERROR_PREFIX + 'Unsupported')
         self.assertEqual(self.sitd.actions(), [])
 

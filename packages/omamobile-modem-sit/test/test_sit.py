@@ -59,8 +59,16 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<I', self.client.next_indication(), 8)[0], 399)
         self.assertFalse(self.client.indications)
 
+    def test_subscription_only_activates(self):
+        for payload in (b'', b'\x00', b'\x01\x00'):
+            with self.assertRaises(ValueError):
+                self.client.request(0x0249, payload)
+        self.peer.setblocking(False)
+        with self.assertRaises(BlockingIOError):
+            self.peer.recv(1)
+
     def test_disallowed_commands_never_write(self):
-        for command in (0x0001, 0x0100, 0x0d00, 0x0d02, 0x0d03, 0x0d0a, 0x0d1b, 0x0201, 0x0208, 0x020c, 0x0249):
+        for command in (0x0001, 0x0100, 0x0d00, 0x0d02, 0x0d03, 0x0d0a, 0x0d1b, 0x0201, 0x0208, 0x020c, 0x024c):
             with self.assertRaises(ValueError):
                 self.client.request(command)
         self.peer.setblocking(False)
@@ -82,10 +90,12 @@ class TransportTests(unittest.TestCase):
     def test_calls_and_sms_need_the_owner_flags(self):
         self.client.allow_calls = True
         self.client.allow_sms = True
-        for ident in (0x0d00, 0x0d1b):
+        for ident in (0x0d00, 0x0d1b, 0x0100):
             sit.check(ident, sms=True, calls=True)
-        with self.assertRaises(ValueError):
-            sit.check(0x0100, sms=True, calls=True)
+        # SEND_SMS over CS ([network] ims = no) only with the SMS flag, like IMS's
+        for ident in (0x0100, 0x0d1b):
+            with self.assertRaises(ValueError):
+                sit.check(ident, sms=False, calls=True)
 
     def test_invalid_length_is_rejected(self):
         self.peer.sendall(struct.pack('<BBHH', 1, 0, 0x0701, 8))

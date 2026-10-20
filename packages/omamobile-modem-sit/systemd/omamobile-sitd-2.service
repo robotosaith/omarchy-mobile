@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+# The SIT RIL: registers a freshly booted CP (SIM, attach APN, LTE, internet
+# bearer, IMS) and then serves calls and SMS on /run/omamobile-sit/socket.
+# Not enabled by the package: MODEM-PLAN.md M4 enables it after the gated
+# first runs. It needs the modem unit's CP ONLINE and never restarts on its
+# own: a second start-up on the same CP is not supported (reboot instead).
+[Unit]
+# Enabled by a device package with two modem stacks (omamobile-device-raven);
+# its settings come from that package's defaults and
+# /etc/omamobile/modem-sit-2.conf (the APN), if any.
+Description=Omarchy Mobile SIT RIL for SIM 2 (modem stack 1)
+Requires=omamobile-modem.service
+After=omamobile-modem.service omamobile-audio.service
+# Nothing to serve on a phone without the modem's vendor files (provisioning).
+ConditionPathExists=/usr/lib/omamobile-vendor/modem/root
+
+[Service]
+Environment=OMAMOBILE_SIT_SIM=2
+Type=notify
+NotifyAccess=main
+# CPIF's channels appear just after the modem unit reports ONLINE.
+ExecStartPre=/bin/sh -c 'for i in $(seq 60); do [ -e /dev/umts_ipc1 ] && exit 0; sleep .5; done; echo "no CPIF channel" >&2; exit 1'
+ExecStart=/usr/bin/omamobile-sitd --bringup
+Restart=no
+# Start-up waits for the SIM's PIN (omamobile-sit sim-pin) as long as it
+# takes; SIM, registration and IMS can take minutes on a fresh CP.
+TimeoutStartSec=infinity
+# Time to hang up a call and restore the audio routes.
+TimeoutStopSec=60
+RuntimeDirectory=omamobile-sit-2
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+StateDirectory=omamobile-sit-2
+StateDirectoryMode=0700
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

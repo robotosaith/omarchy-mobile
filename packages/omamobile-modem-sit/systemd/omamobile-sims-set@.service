@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+# "omamobile-sit sims set KIND N" (and the shell's SIMs page): make a SIM the
+# default for data, calls or texts. The instance is KIND-N, e.g. data-2.
+[Unit]
+Description=Omarchy Mobile: make a SIM the default (%i)
+After=omamobile-sitd.service omamobile-sitd-2.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/omamobile-sims-set %i
+TimeoutStartSec=3min
