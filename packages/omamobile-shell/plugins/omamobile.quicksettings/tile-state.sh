@@ -93,6 +93,7 @@ except (OSError, ValueError):
     sys.exit(0)
 words = [str(m.get(k)) for k in ("operator", "tech") if m.get(k)]
 print("data_status=" + " ".join(words))
+print("data_bars=%d" % (m.get("signal") or 0 if m.get("registration") in ("home", "roaming") else -1))
 ' "$state"
 else
   echo "data=none"

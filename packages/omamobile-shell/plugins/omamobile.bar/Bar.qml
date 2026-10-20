@@ -76,13 +76,47 @@ Item {
   readonly property string networkIcon: StatusModel.networkIcon(networkKind,
     wifiNetwork ? Math.round((wifiNetwork.signalStrength || 0) * 100) : -1)
 
-  // Cellular signal. STUB: Quickshell.Networking has no modem backend and the
-  // Pixel 7 Pro's modem has no mainline driver yet, so there is nothing to read.
-  // When a ModemManager-backed source exists, set `available` and `strength`
-  // (0-100) from it and the icon appears; until then it renders nothing.
+  // Cellular: omamobile-sitd's public state per SIM (omamobile-modem-sit;
+  // SIM 2's files end in -2), polled since sitd replaces them by renaming.
+  // The bar shows the data SIM's generation ("4G") and one row of 4 bars
+  // per SIM, stacked as Android shows two SIMs.
+  property var sims: [null, null]
+  property int dataSim: 1
   readonly property QtObject cellular: QtObject {
-    readonly property bool available: false
-    readonly property int strength: -1
+    readonly property bool available: root.sims[0] !== null || root.sims[1] !== null
+    readonly property string generation: StatusModel.generationLabel(root.sims, root.dataSim)
+  }
+
+  FileView {
+    id: sim1State
+    path: "/run/omamobile-sit/state.json"
+    printErrors: false
+    onLoaded: root.sims = [StatusModel.parseSim(text()), root.sims[1]]
+    onLoadFailed: root.sims = [null, root.sims[1]]
+  }
+
+  FileView {
+    id: sim2State
+    path: "/run/omamobile-sit-2/state.json"
+    printErrors: false
+    onLoaded: root.sims = [root.sims[0], StatusModel.parseSim(text())]
+    onLoadFailed: root.sims = [root.sims[0], null]
+  }
+
+  FileView {
+    id: simsConf
+    path: "/etc/omamobile/sims.conf"
+    printErrors: false
+    onLoaded: root.dataSim = StatusModel.dataSim(text())
+    onLoadFailed: root.dataSim = 1
+  }
+
+  Timer {
+    interval: 3000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: { sim1State.reload(); sim2State.reload(); simsConf.reload() }
   }
 
   readonly property var btAdapter: Bluetooth.defaultAdapter
@@ -187,9 +221,40 @@ Item {
             text: root.bluetoothConnected ? "󰂱" : "󰂯"
           }
 
-          StatusGlyph {
+          Row {
             visible: root.cellular.available
-            text: StatusModel.cellularIcon(root.cellular.strength)
+            spacing: Style.spacing.xs
+            anchors.verticalCenter: parent.verticalCenter
+
+            Text {
+              visible: text !== ""
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+              text: root.cellular.generation
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Math.round(Style.font.iconLarge * 0.6)
+              font.bold: true
+            }
+
+            // One row of bars per SIM, SIM 1 on top; one SIM fills the height.
+            Column {
+              id: meter
+              readonly property int rows: (root.sims[0] ? 1 : 0) + (root.sims[1] ? 1 : 0)
+              readonly property real full: Math.round(Style.font.iconLarge * 0.8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: 2
+
+              Repeater {
+                model: root.sims.filter(function(s) { return s !== null })
+                delegate: SignalBars {
+                  required property var modelData
+                  bars: modelData.bars
+                  registered: modelData.registered
+                  height: meter.rows > 1 ? (meter.full - meter.spacing) / 2 : meter.full
+                }
+              }
+            }
           }
 
           StatusGlyph {
@@ -238,6 +303,27 @@ Item {
           }
         }
         onClicked: if (!pulled) root.toggleQuickSettings()
+      }
+    }
+  }
+
+  // Four bars rising left to right; the unlit ones dim. A SIM that isn't on
+  // a network shows all four dim.
+  component SignalBars: Row {
+    id: barsRow
+    property int bars: 0
+    property bool registered: false
+    spacing: 1
+    Repeater {
+      model: 4
+      delegate: Rectangle {
+        required property int index
+        width: 3
+        height: Math.max(2, Math.round(barsRow.height * (index + 1) / 4))
+        anchors.bottom: parent.bottom
+        radius: 0.5
+        color: root.foreground
+        opacity: barsRow.registered && index < barsRow.bars ? 1 : 0.3
       }
     }
   }
