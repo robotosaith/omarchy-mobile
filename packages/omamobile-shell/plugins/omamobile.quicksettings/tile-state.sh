@@ -77,9 +77,12 @@ else
   echo "record=none"
 fi
 
-# data: the daemon's public state is world-readable; the bearer service's
-# state is what "data on|off" switches.
+# data: the data SIM's public state (world-readable; SIM 2's in
+# /run/omamobile-sit-2, which SIM in /etc/omamobile/sims.conf); the bearer
+# service's state is what "data on|off" switches.
+data_sim=$(sed -n 's/^data *= *\([12]\) *$/\1/p' /etc/omamobile/sims.conf 2>/dev/null | head -1)
 state=/run/omamobile-sit/state.json
+[ "$data_sim" = 2 ] && state=/run/omamobile-sit-2/state.json
 if have omamobile-sit && [ -r "$state" ] && have python3; then
   if systemctl is-active --quiet omamobile-sit-data.service 2>/dev/null; then echo "data=on"; else echo "data=off"; fi
   python3 -I -c '

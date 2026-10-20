@@ -242,6 +242,13 @@ sys.exit(1 if bad else 0)
 PY
 pass "update sheet"
 
+# The SIMs page (Mobile data tile's long-press): its model.
+if command -v node >/dev/null; then
+  node test/sims-model.js >/dev/null || fail "SIMs page model"
+fi
+grep -c 'openSimsPanel' plugins/omamobile.quicksettings/QuickSettings.qml >/dev/null || fail "the Mobile data tile opens the SIMs page"
+pass "SIMs page"
+
 # The SIM PIN sheet: its model, the phone profile and existing users, and
 # never over the lock screen.
 if command -v node >/dev/null; then

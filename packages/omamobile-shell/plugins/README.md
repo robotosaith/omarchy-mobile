@@ -810,3 +810,19 @@ keypad, Unlock SIM and Not now.
 * **Never over the lock:** the overlay layer, with no `above_lock` rule in
   `hypr/phone.lua`.
 
+### The SIMs page
+
+A long-press on the Mobile data tile opens "SIMs", as Android's SIM
+settings: three pickers, Mobile data, Calls and Texts, each listing both
+SIMs by name ("SIM 1 (tray)", "SIM 2 (eSIM)") with what each is doing now
+(operator and technology, "Needs its PIN", "Off"). It reads
+`omamobile-sit sims --json` every 3 s while open and sets a choice with
+`omamobile-sit sims set KIND N`, which starts
+`omamobile-sims-set@KIND-N.service` (omamobile-modem-sit's polkit rule lets
+the active local user start exactly those). Calls and texts are recorded
+for `dial` and `sms send`; moving mobile data restarts both SIM services
+(about 30 s, the row says "Switching…"), since the modem gives packet
+service to one SIM only. A SIM waiting for its PIN adds "Enter SIM PIN",
+which brings back the SIM PIN sheet. The tile itself follows the data
+SIM's state.
+
