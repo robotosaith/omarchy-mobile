@@ -1,0 +1,74 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# raven-install-alarm: M2 bring-up on the Pixel 6 Pro (device/raven/BRINGUP-M1.md
+# section 6). Formats userdata as ext4 from our initramfs, unpacks the
+# official Arch Linux ARM aarch64 root into it and adds the minimum to reach
+# it over USB: networkd on usb0 (172.16.42.1), sshd with your key, a root
+# shell on the USB serial console, no kernel modules yet (so udev loads
+# nothing on the first Arch boot). DESTROYS userdata.
+#
+# Run from the repository with the phone in our initramfs (ssh root@172.16.42.1):
+#   tools/raven-install-alarm ~/android/downloads/alarm/ArchLinuxARM-aarch64-latest.tar.gz
+# Verify the tarball's signature first (Arch Linux ARM Build System key).
+set -euo pipefail
+
+tarball=${1:?usage: raven-install-alarm ArchLinuxARM-aarch64-latest.tar.gz}
+[[ -f $tarball ]] || { echo "no $tarball" >&2; exit 1; }
+key=${KEY:-$HOME/.ssh/id_ed25519.pub}
+[[ -f $key ]] || { echo "no $key (set KEY=)" >&2; exit 1; }
+ssh=$(dirname "$0")/phone-ssh
+
+say() { printf '\e[1m==> %s\e[0m\n' "$*"; }
+
+say "Checking the phone: initramfs, userdata on sda27, writable, not mounted"
+"$ssh" 'set -e
+  [ ! -x /usr/lib/systemd/systemd ] || { echo "not in the initramfs"; exit 1; }
+  dev=""
+  for s in /sys/class/block/sda*; do grep -qx PARTNAME=userdata $s/uevent && dev=/dev/${s##*/}; done
+  [ "$dev" = /dev/sda27 ] || { echo "unexpected userdata device: $dev"; exit 1; }
+  [ "$(cat /sys/class/block/sda27/ro)" = 0 ] || { echo "userdata is read-only"; exit 1; }
+  ! grep -q "^/dev/sda27 " /proc/mounts || { echo "userdata is mounted"; exit 1; }
+  echo "userdata: /dev/sda27, $(( $(cat /sys/class/block/sda27/size) / 2097152 )) GiB"'
+
+read -r -p "Format userdata (sda27) and install Arch Linux ARM? Type 'raven' to go: " answer
+[[ $answer == raven ]] || { echo "stopped"; exit 1; }
+
+say "Formatting userdata as ext4 (label omamobile-root)"
+"$ssh" 'set -e
+  mkfs.ext4 -F -q -L omamobile-root -E lazy_itable_init=1,lazy_journal_init=1 /dev/sda27
+  mkdir -p /mnt/arch && mount -t ext4 /dev/sda27 /mnt/arch && df -h /mnt/arch | tail -1'
+
+say "Unpacking $(basename "$tarball") (a few minutes)"
+"$ssh" 'tar -xzf - -C /mnt/arch' < "$tarball"
+
+say "Configuring: hostname, usb0, sshd key, serial console"
+"$ssh" 'set -e; R=/mnt/arch
+  echo omamobile > $R/etc/hostname
+  cat > $R/etc/systemd/network/10-omamobile-usb0.network <<EOF
+# USB gadget network from our initramfs; the laptop is 172.16.42.2
+[Match]
+Name=usb0
+
+[Network]
+Address=172.16.42.1/24
+DNS=1.1.1.1
+DNS=9.9.9.9
+ConfigureWithoutCarrier=yes
+LinkLocalAddressing=no
+
+[Route]
+# The laptop link is the fallback; Wi-Fi (NetworkManager, metric 600) goes first
+Gateway=172.16.42.2
+Metric=1024
+EOF
+  mkdir -p $R/etc/systemd/system/multi-user.target.wants $R/etc/systemd/system/getty.target.wants
+  ln -sf /usr/lib/systemd/system/systemd-networkd.service $R/etc/systemd/system/multi-user.target.wants/systemd-networkd.service
+  ln -sf /usr/lib/systemd/system/sshd.service $R/etc/systemd/system/multi-user.target.wants/sshd.service
+  # The ACM function of our gadget: a root login over USB serial as a fallback
+  ln -sf /usr/lib/systemd/system/serial-getty@.service $R/etc/systemd/system/getty.target.wants/serial-getty@ttyGS0.service
+  mkdir -p -m 700 $R/root/.ssh'
+"$ssh" 'cat > /mnt/arch/root/.ssh/authorized_keys; chmod 600 /mnt/arch/root/.ssh/authorized_keys' < "$key"
+
+say "Syncing and unmounting"
+"$ssh" 'set -e; sync; umount /mnt/arch; echo done'
+say "Installed. Next: boot without omamobile.initramfs so init hands over to Arch."
