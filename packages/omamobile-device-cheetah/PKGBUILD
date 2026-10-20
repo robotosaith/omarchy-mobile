@@ -8,6 +8,8 @@ arch=(aarch64)
 url="https://github.com/derekross/omarchy-mobile"
 license=(MIT Apache-2.0)
 depends=(bash systemd util-linux omamobile-keyring i2c-tools)
+# The modem's drivers stay blacklisted until its runtime loads them
+provides=(omamobile-modem-policy)
 backup=(etc/pacman.d/omamobile-mirrorlist)
 install=omamobile-device-cheetah.install
 makedepends=(gcc python)
