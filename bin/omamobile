@@ -318,8 +318,9 @@ cmd_initramfs() {
   tar -xzf "$dl/$tarball" -C "$stage"
   local apk
   # e2fsprogs-extra: resize2fs and dumpe2fs, to grow a freshly flashed root
-  # to the whole userdata partition on its first boot (init, boot_arch)
-  for apk in $(python3 -I "$ROOT/tools/alpine-fetch.py" "$ver" "$dl/apks" dropbear kexec-tools e2fsprogs e2fsprogs-extra); do
+  # to the whole userdata partition on its first boot (init, boot_arch).
+  # i2c-tools: the MAX77759 USB data switch, before any Type-C driver runs.
+  for apk in $(python3 -I "$ROOT/tools/alpine-fetch.py" "$ver" "$dl/apks" dropbear kexec-tools e2fsprogs e2fsprogs-extra i2c-tools); do
     tar -xzf "$apk" -C "$stage" --exclude='.PKGINFO' --exclude='.SIGN.*' --exclude='.*.sh' 2>/dev/null || true
   done
   for f in sbin/e2fsck usr/sbin/resize2fs usr/sbin/dumpe2fs; do
@@ -328,12 +329,34 @@ cmd_initramfs() {
   install -m 755 "$init" "$stage/init"
 
   initramfs_config "$stage/etc"
+  # Modules the init loads before anything else (INITRAMFS_MODULES, in load
+  # order), from this kernel build's modules_install: must match the kernel
+  local m ko mdir=""
+  if [[ -n ${DEV_INITRAMFS_MODULES:-} ]]; then
+    mdir=$(ls -d "$KERNEL_OUT"/modules-staging/lib/modules/*/ 2>/dev/null | head -1)
+    [[ -n $mdir ]] || die "INITRAMFS_MODULES needs the kernel's modules: omamobile modules"
+    mkdir -p "$stage/lib/modules/omamobile"
+    for m in $DEV_INITRAMFS_MODULES; do
+      [[ $m =~ ^[a-z0-9_-]+$ ]] || die "INITRAMFS_MODULES: bad module name '$m'"
+      ko=$(find "$mdir" -name "$m.ko" | head -1)
+      [[ -n $ko ]] || die "INITRAMFS_MODULES: no $m.ko in $mdir"
+      cp "$ko" "$stage/lib/modules/omamobile/"
+      echo "$m" >> "$stage/lib/modules/omamobile/order"
+    done
+    basename "$mdir" > "$KERNEL_OUT/initramfs.release"
+    say "Initramfs modules: $DEV_INITRAMFS_MODULES"
+  fi
 
   # Boot logo, drawn by init straight onto the framebuffer until Plymouth
   # takes over: Omarchy's Plymouth screen (logo centred on #1a1b26, at scale
   # 1), rendered from the theme installed on this Omarchy machine.
+  # SPLASH_BGRA_GZ: the same picture, rendered elsewhere (a build host
+  # without Omarchy's theme or ImageMagick), raw BGRA at PANEL_SIZE, gzipped.
   local logo=/usr/share/plymouth/themes/omarchy/logo.png
-  if [[ -f $logo ]] && command -v magick >/dev/null; then
+  if [[ -n ${SPLASH_BGRA_GZ:-} ]]; then
+    [[ -f $SPLASH_BGRA_GZ ]] || die "SPLASH_BGRA_GZ: no file $SPLASH_BGRA_GZ"
+    cp "$SPLASH_BGRA_GZ" "$stage/splash.bgra.gz"
+  elif [[ -f $logo ]] && command -v magick >/dev/null; then
     magick -size "$DEV_PANEL_SIZE" xc:'#1a1b26' "$logo" -gravity center -composite \
       -alpha off -alpha on -depth 8 BGRA:- | gzip -9 > "$stage/splash.bgra.gz"
   else
@@ -409,6 +432,12 @@ cmd_images() {
   local dtb="$boot/dts/$DEV_DTB"
   [[ -f "$boot/Image" && -f "$dtb" ]] || die "build the kernel first: omamobile kernel"
   [[ -f "$KERNEL_OUT/initramfs.cpio.lz4" ]] || die "build the initramfs first: omamobile initramfs"
+  # The init insmods INITRAMFS_MODULES, which only load into the kernel they
+  # were built with: an initramfs from an older build loses them silently.
+  if [[ -n ${DEV_INITRAMFS_MODULES:-} ]]; then
+    [[ $(cat "$KERNEL_OUT/initramfs.release" 2>/dev/null) == "$(cat "$KERNEL_OUT/include/config/kernel.release")" ]] ||
+      die "the initramfs modules are not from this kernel build: omamobile modules && omamobile initramfs"
+  fi
   mkdir -p "$img" && rm -rf "$img"/*
 
   # The descriptor's bring-up overlays, compiled from device/<codename>/overlays
@@ -462,7 +491,11 @@ cmd_images() {
   python3 -I "$SRC_DIR/system/libufdt/utils/src/mkdtboimg.py" create "$img/dtbo.img" \
     --page_size=4096 --id="$DEV_DTBO_BOARD_ID" --rev="$DEV_DTBO_BOARD_REV" "$dtbo"
 
-  say "Boot images (header v4)"
+  # Two layouts, picked by BOOT_IMAGES. With vendor_kernel_boot (cheetah), it
+  # carries the DTB and our initramfs, vendor_boot only the command line, and
+  # the OS version sits on init_boot. Without it (Pixel 6), vendor_boot
+  # carries all three and the OS version sits on boot.
+  say "Boot images (header v4): $DEV_BOOT_IMAGES"
   : | cpio -o -H newc --quiet > "$img/empty.cpio"
   local cmdline="$DEV_VENDOR_CMDLINE"
   # The generic ramdisk (empty) and the OS version go in init_boot where the
@@ -613,7 +646,9 @@ cmd_push() {
     say "${p}_b ($dev) written and verified"
   done
   say "Rebooting into the new images"
-  "$ssh" 'sync; (sleep 1; PATH=/usr/local/bin:$PATH reboot-to omamobile) >/dev/null 2>&1 &' || true
+  # The Arch root has no reboot-to before the device package installs it
+  "$ssh" 'sync; PATH=/usr/local/bin:$PATH; if command -v reboot-to >/dev/null; then (sleep 1; reboot-to omamobile) >/dev/null 2>&1 &
+    else systemd-run --on-active=1 systemctl reboot >/dev/null; fi' || true
   sleep 15
   # Judge by the last answer only: a phone that still answered with the old
   # boot id just before it went down did reboot, and then never came back.
