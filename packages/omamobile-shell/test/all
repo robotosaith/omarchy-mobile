@@ -242,6 +242,18 @@ sys.exit(1 if bad else 0)
 PY
 pass "update sheet"
 
+# The SIM PIN sheet: its model, the phone profile and existing users, and
+# never over the lock screen.
+if command -v node >/dev/null; then
+  node test/simpin-model.js >/dev/null || fail "SIM PIN sheet model"
+fi
+python3 -c 'import json; assert {"id": "omamobile.simpin"} in json.load(open("profile/shell.json"))["plugins"]' \
+  || fail "the phone profile enables the SIM PIN sheet"
+grep -c 'add_plugin omamobile.simpin' bin/omamobile-setup-user >/dev/null || fail "existing users get the SIM PIN sheet"
+if grep -n 'above_lock' hypr/phone.lua | grep -c 'omamobile-simpin' >/dev/null; then fail "the SIM PIN sheet never shows over the lock"; fi
+grep -c -- '--stdin' plugins/omamobile.simpin/SimPinModel.js >/dev/null || fail "the SIM PIN goes on stdin"
+pass "SIM PIN sheet"
+
 # The permission sheet: the portal Access backend (its pure parts, then the
 # D-Bus service on a private bus against a fake omarchy-shell), the sheet's
 # model, and the wiring that makes the portal pick it under Hyprland.

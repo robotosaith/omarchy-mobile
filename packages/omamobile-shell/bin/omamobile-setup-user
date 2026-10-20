@@ -245,6 +245,11 @@ fi
 if omarchy-done ensure omamobile-access-plugin; then
   add_plugin omamobile.access
 fi
+# The SIM PIN sheet (omamobile.simpin): a locked SIM's PIN, asked after the
+# phone is unlocked (omamobile-modem-sit's sitd waits for it).
+if omarchy-done ensure omamobile-simpin-plugin; then
+  add_plugin omamobile.simpin
+fi
 if omarchy-done ensure omamobile-menu-update; then
   extension=~/.config/omarchy/extensions/omarchy-menu.jsonc
   mkdir -p "$(dirname "$extension")"
