@@ -168,6 +168,12 @@ Item {
       root.toggleQuickSettings()
       return "ok"
     }
+
+    // What the cellular icon draws from, for debugging: both SIMs as parsed
+    // and the data SIM.
+    function cellular(): string {
+      return JSON.stringify({ sims: root.sims, dataSim: root.dataSim, generation: root.cellular.generation })
+    }
   }
 
   // ---------------------------------------------------------------- surface
@@ -243,8 +249,9 @@ Item {
             SignalStack {
               anchors.verticalCenter: parent.verticalCenter
               height: Math.round(Style.font.iconLarge * 0.8)
-              upper: root.sims[0]
-              lower: root.sims[1]
+              // The data SIM's bars rise; the other SIM's sit under them.
+              upper: root.sims[root.dataSim - 1]
+              lower: root.sims[2 - root.dataSim]
             }
           }
 
@@ -298,9 +305,9 @@ Item {
     }
   }
 
-  // As Android stacks two SIMs in one icon: SIM 1's four bars rising left
-  // to right, and under them SIM 2's four as a row of short bars, all one
-  // height. One SIM: its rising bars fill the icon. Unlit bars, and a SIM
+  // As Android stacks two SIMs in one icon: the data SIM's four bars rising
+  // left to right, and under them the other SIM's four as a row of short
+  // bars, all one height. One SIM: its rising bars fill the icon. Unlit bars, and a SIM
   // off any network, are dim.
   component SignalStack: Column {
     id: stack
