@@ -237,23 +237,14 @@ Item {
               font.bold: true
             }
 
-            // One row of bars per SIM, SIM 1 on top; one SIM fills the height.
-            Column {
-              id: meter
-              readonly property int rows: (root.sims[0] ? 1 : 0) + (root.sims[1] ? 1 : 0)
-              readonly property real full: Math.round(Style.font.iconLarge * 0.8)
+            // One signal icon for both SIMs, as Android stacks them: four
+            // rising columns, each split in two, the top half lit for SIM 1's
+            // bars and the bottom half for SIM 2's. One SIM: whole columns.
+            SignalStack {
               anchors.verticalCenter: parent.verticalCenter
-              spacing: 2
-
-              Repeater {
-                model: root.sims.filter(function(s) { return s !== null })
-                delegate: SignalBars {
-                  required property var modelData
-                  bars: modelData.bars
-                  registered: modelData.registered
-                  height: meter.rows > 1 ? (meter.full - meter.spacing) / 2 : meter.full
-                }
-              }
+              height: Math.round(Style.font.iconLarge * 0.8)
+              upper: root.sims[0]
+              lower: root.sims[1]
             }
           }
 
@@ -307,23 +298,53 @@ Item {
     }
   }
 
-  // Four bars rising left to right; the unlit ones dim. A SIM that isn't on
-  // a network shows all four dim.
-  component SignalBars: Row {
-    id: barsRow
-    property int bars: 0
-    property bool registered: false
-    spacing: 1
-    Repeater {
-      model: 4
-      delegate: Rectangle {
-        required property int index
-        width: 3
-        height: Math.max(2, Math.round(barsRow.height * (index + 1) / 4))
-        anchors.bottom: parent.bottom
-        radius: 0.5
-        color: root.foreground
-        opacity: barsRow.registered && index < barsRow.bars ? 1 : 0.3
+  // As Android stacks two SIMs in one icon: SIM 1's four bars rising left
+  // to right, and under them SIM 2's four as a row of short bars, all one
+  // height. One SIM: its rising bars fill the icon. Unlit bars, and a SIM
+  // off any network, are dim.
+  component SignalStack: Column {
+    id: stack
+    property var upper: null
+    property var lower: null
+    readonly property bool both: upper !== null && lower !== null
+    readonly property var main: upper !== null ? upper : lower
+    readonly property int gap: 2
+    readonly property int lowHeight: both ? Math.max(2, Math.round(height * 0.2)) : 0
+    function lit(sim, index) { return sim !== null && sim.registered && index < sim.bars }
+    spacing: both ? gap : 0
+
+    Row {
+      id: rising
+      spacing: 1
+      height: stack.height - stack.lowHeight - stack.spacing
+      Repeater {
+        model: 4
+        delegate: Rectangle {
+          required property int index
+          width: 3
+          height: Math.max(2, Math.round(rising.height * (index + 1) / 4))
+          anchors.bottom: parent.bottom
+          radius: 0.5
+          color: root.foreground
+          opacity: stack.lit(stack.main, index) ? 1 : 0.3
+        }
+      }
+    }
+
+    Row {
+      visible: stack.both
+      spacing: 1
+      height: stack.lowHeight
+      Repeater {
+        model: 4
+        delegate: Rectangle {
+          required property int index
+          width: 3
+          height: stack.lowHeight
+          radius: 0.5
+          color: root.foreground
+          opacity: stack.lit(stack.lower, index) ? 1 : 0.3
+        }
       }
     }
   }
