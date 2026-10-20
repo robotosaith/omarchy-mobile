@@ -21,6 +21,7 @@ logical at scale 3).
 | `omamobile.keyboard` | `panel` (keepLoaded) | A hide button right above the on-screen keyboard while it is up (also over the lock) |
 | `omamobile.update` | `panel` (keepLoaded) | The update sheet: Omarchy's update for a phone, in place of its terminal update |
 | `omamobile.access` | `panel` (keepLoaded) | The permission sheet: xdg-desktop-portal's "Allow Camera to use the camera?", in place of GTK's desktop dialog |
+| `omamobile.simpin` | `panel` (keepLoaded) | The SIM PIN sheet: a locked SIM's PIN after the phone is unlocked, one sheet per SIM, named by its slot |
 | lockpad | none | Not built; see [Lock screen](#lock-screen-pin-pad) for why and what upstream needs |
 
 ## Enabling
@@ -782,3 +783,46 @@ What upstream needs instead, smallest first:
   `omarchy.notifications` only to full bars. Quick settings calls the
   `notifications` IPC target on its own shell instance (`qs ipc -p
   Quickshell.shellDir`) instead.
+
+## omamobile.simpin
+
+A locked SIM's PIN. omamobile-modem-sit runs one `omamobile-sitd` per SIM
+(SIM 1 on modem stack 0, SIM 2 on stack 1), and each waits at start-up for
+its PIN. The sheet polls their public status every 2 s
+(`/run/omamobile-sit/state.json`, `/run/omamobile-sit-2/state.json`) and,
+for each SIM whose state is `pin`, shows a bottom sheet once the phone is
+unlocked. At boot three PINs come one after another: the phone's own on the
+lock screen, then SIM 1's and SIM 2's here. So the sheet looks like the
+permission sheet, not like the lock: a SIM glyph, the SIM's name from sitd
+("SIM 2 (eSIM)": the slot names come from the device package, e.g.
+omamobile-device-raven's "tray, eSIM"), "Enter the SIM card's PIN to use
+this SIM. It is not your phone's unlock PIN.", the tries left, its own
+keypad, Unlock SIM and Not now.
+
+* **Sending:** `omamobile-sit --sim N sim-pin --stdin`, the PIN on stdin,
+  never on argv. With one try left the warning says so in the urgent colour,
+  the button reads "Use the last try", and only then does the command carry
+  `--last-try` (sitd refuses a last try without it). A SIM with no tries
+  left isn't asked: it needs its PUK.
+* **Not now** leaves that SIM locked until it stops asking (a modem
+  restart). `omarchy-shell shell call omamobile.simpin ask ''` brings the
+  sheet back; `snapshot ''` prints what it sees.
+* **Never over the lock:** the overlay layer, with no `above_lock` rule in
+  `hypr/phone.lua`.
+
+### The SIMs page
+
+A long-press on the Mobile data tile opens "SIMs", as Android's SIM
+settings: three pickers, Mobile data, Calls and Texts, each listing both
+SIMs by name ("SIM 1 (tray)", "SIM 2 (eSIM)") with what each is doing now
+(operator and technology, "Needs its PIN", "Off"). It reads
+`omamobile-sit sims --json` every 3 s while open and sets a choice with
+`omamobile-sit sims set KIND N`, which starts
+`omamobile-sims-set@KIND-N.service` (omamobile-modem-sit's polkit rule lets
+the active local user start exactly those). Calls and texts are recorded
+for `dial` and `sms send`; moving mobile data restarts both SIM services
+(about 30 s, the row says "Switching…"), since the modem gives packet
+service to one SIM only. A SIM waiting for its PIN adds "Enter SIM PIN",
+which brings back the SIM PIN sheet. The tile itself follows the data
+SIM's state.
+

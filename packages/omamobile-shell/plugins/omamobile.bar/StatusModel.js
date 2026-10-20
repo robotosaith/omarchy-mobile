@@ -50,3 +50,34 @@ function batteryIcon(percent, charging, full) {
   var index = Math.max(0, Math.min(9, Math.floor(percent / 10)))
   return charging ? chargingIcons[index] : defaultIcons[index]
 }
+
+// One SIM from omamobile-sitd's public state.json: whether it is on a
+// network, its 0-4 bars and its generation ("4G"); null without a file.
+function parseSim(text) {
+  var v
+  try { v = JSON.parse(String(text || "")) } catch (e) { return null }
+  var m = v && v.modem
+  if (!m) return null
+  var registered = m.registration === "home" || m.registration === "roaming"
+  var bars = Number(m.signal)
+  return {
+    registered: registered,
+    bars: registered && isFinite(bars) ? Math.max(0, Math.min(4, Math.round(bars))) : 0,
+    generation: registered && typeof m.generation === "string" ? m.generation : "",
+    roaming: m.registration === "roaming"
+  }
+}
+
+// The data SIM from /etc/omamobile/sims.conf ("data = 2"); 1 by default.
+function dataSim(text) {
+  var m = /^\s*data\s*=\s*([12])\s*$/m.exec(String(text || ""))
+  return m ? Number(m[1]) : 1
+}
+
+// The label next to the meter: the data SIM's generation, else the other's.
+function generationLabel(sims, data) {
+  var first = sims[data - 1], other = sims[2 - data]
+  if (first && first.generation) return first.generation
+  return other && other.generation ? other.generation : ""
+}
+

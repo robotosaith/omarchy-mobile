@@ -76,13 +76,47 @@ Item {
   readonly property string networkIcon: StatusModel.networkIcon(networkKind,
     wifiNetwork ? Math.round((wifiNetwork.signalStrength || 0) * 100) : -1)
 
-  // Cellular signal. STUB: Quickshell.Networking has no modem backend and the
-  // Pixel 7 Pro's modem has no mainline driver yet, so there is nothing to read.
-  // When a ModemManager-backed source exists, set `available` and `strength`
-  // (0-100) from it and the icon appears; until then it renders nothing.
+  // Cellular: omamobile-sitd's public state per SIM (omamobile-modem-sit;
+  // SIM 2's files end in -2), polled since sitd replaces them by renaming.
+  // The bar shows the data SIM's generation ("4G") and one row of 4 bars
+  // per SIM, stacked as Android shows two SIMs.
+  property var sims: [null, null]
+  property int dataSim: 1
   readonly property QtObject cellular: QtObject {
-    readonly property bool available: false
-    readonly property int strength: -1
+    readonly property bool available: root.sims[0] !== null || root.sims[1] !== null
+    readonly property string generation: StatusModel.generationLabel(root.sims, root.dataSim)
+  }
+
+  FileView {
+    id: sim1State
+    path: "/run/omamobile-sit/state.json"
+    printErrors: false
+    onLoaded: root.sims = [StatusModel.parseSim(text()), root.sims[1]]
+    onLoadFailed: root.sims = [null, root.sims[1]]
+  }
+
+  FileView {
+    id: sim2State
+    path: "/run/omamobile-sit-2/state.json"
+    printErrors: false
+    onLoaded: root.sims = [root.sims[0], StatusModel.parseSim(text())]
+    onLoadFailed: root.sims = [root.sims[0], null]
+  }
+
+  FileView {
+    id: simsConf
+    path: "/etc/omamobile/sims.conf"
+    printErrors: false
+    onLoaded: root.dataSim = StatusModel.dataSim(text())
+    onLoadFailed: root.dataSim = 1
+  }
+
+  Timer {
+    interval: 3000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: { sim1State.reload(); sim2State.reload(); simsConf.reload() }
   }
 
   readonly property var btAdapter: Bluetooth.defaultAdapter
@@ -133,6 +167,12 @@ Item {
     function toggleQuickSettings(): string {
       root.toggleQuickSettings()
       return "ok"
+    }
+
+    // What the cellular icon draws from, for debugging: both SIMs as parsed
+    // and the data SIM.
+    function cellular(): string {
+      return JSON.stringify({ sims: root.sims, dataSim: root.dataSim, generation: root.cellular.generation })
     }
   }
 
@@ -187,9 +227,32 @@ Item {
             text: root.bluetoothConnected ? "󰂱" : "󰂯"
           }
 
-          StatusGlyph {
+          Row {
             visible: root.cellular.available
-            text: StatusModel.cellularIcon(root.cellular.strength)
+            spacing: Style.spacing.xs
+            anchors.verticalCenter: parent.verticalCenter
+
+            Text {
+              visible: text !== ""
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+              text: root.cellular.generation
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Math.round(Style.font.iconLarge * 0.6)
+              font.bold: true
+            }
+
+            // One signal icon for both SIMs, as Android stacks them: four
+            // rising columns, each split in two, the top half lit for SIM 1's
+            // bars and the bottom half for SIM 2's. One SIM: whole columns.
+            SignalStack {
+              anchors.verticalCenter: parent.verticalCenter
+              height: Math.round(Style.font.iconLarge * 0.8)
+              // The data SIM's bars rise; the other SIM's sit under them.
+              upper: root.sims[root.dataSim - 1]
+              lower: root.sims[2 - root.dataSim]
+            }
           }
 
           StatusGlyph {
@@ -238,6 +301,57 @@ Item {
           }
         }
         onClicked: if (!pulled) root.toggleQuickSettings()
+      }
+    }
+  }
+
+  // As Android stacks two SIMs in one icon: the data SIM's four bars rising
+  // left to right, and under them the other SIM's four as a row of short
+  // bars, all one height. One SIM: its rising bars fill the icon. Unlit bars, and a SIM
+  // off any network, are dim.
+  component SignalStack: Column {
+    id: stack
+    property var upper: null
+    property var lower: null
+    readonly property bool both: upper !== null && lower !== null
+    readonly property var main: upper !== null ? upper : lower
+    readonly property int gap: 2
+    readonly property int lowHeight: both ? Math.max(2, Math.round(height * 0.2)) : 0
+    function lit(sim, index) { return sim !== null && sim.registered && index < sim.bars }
+    spacing: both ? gap : 0
+
+    Row {
+      id: rising
+      spacing: 1
+      height: stack.height - stack.lowHeight - stack.spacing
+      Repeater {
+        model: 4
+        delegate: Rectangle {
+          required property int index
+          width: 3
+          height: Math.max(2, Math.round(rising.height * (index + 1) / 4))
+          anchors.bottom: parent.bottom
+          radius: 0.5
+          color: root.foreground
+          opacity: stack.lit(stack.main, index) ? 1 : 0.3
+        }
+      }
+    }
+
+    Row {
+      visible: stack.both
+      spacing: 1
+      height: stack.lowHeight
+      Repeater {
+        model: 4
+        delegate: Rectangle {
+          required property int index
+          width: 3
+          height: stack.lowHeight
+          radius: 0.5
+          color: root.foreground
+          opacity: stack.lit(stack.lower, index) ? 1 : 0.3
+        }
       }
     }
   }

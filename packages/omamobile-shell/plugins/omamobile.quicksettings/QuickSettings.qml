@@ -543,6 +543,11 @@ Item {
     root.dismiss()
   }
 
+  function openSimsPanel() {
+    openPage("sims")
+    root.dismiss()
+  }
+
   function openBluetoothPanel() {
     openPage("bluetooth")
     root.dismiss()
@@ -553,9 +558,16 @@ Item {
     if (page !== "wifi") wifiPicker.close()
     if (page !== "bluetooth") bluetoothPanelItem.close()
     if (page !== "record") recordPanelItem.close()
+    if (page !== "sims") simsPanelItem.close()
     if (page === "wifi") wifiPicker.open()
     else if (page === "bluetooth") bluetoothPanelItem.open()
     else if (page === "record") recordPanelItem.open()
+    else if (page === "sims") simsPanelItem.open()
+  }
+
+  SimsPanel {
+    id: simsPanelItem
+    onBackRequested: root.backToSheet(simsPanelItem)
   }
 
   RecordPanel {
@@ -680,10 +692,16 @@ Item {
     id: mobileData
     readonly property bool available: root.probedHas("data")
     readonly property bool enabled: available && root.probedOn("mobile-data", "data")
-    readonly property string icon: "󰞃"
+    // The data SIM's bars while mobile data is on; the crossed-out glyph off.
+    readonly property string icon: enabled
+      ? ["󰢿", "󰢼", "󰢽", "󰢾", "󰢾"][Math.max(0, Math.min(4, Number(root.probed.data_bars) || 0))]
+      : "󰞃"
     readonly property string status: !available ? "No modem"
       : !enabled ? "Off" : (root.probed.data_status || "On")
     function toggle() { if (available) root.runTileAction("mobile-data", !enabled) }
+    // Which SIM does data, calls and texts: the SIMs page.
+    readonly property bool longPress: true
+    function openDetails() { root.openSimsPanel() }
   }
 
   // Rotation lock over omamobile-autorotate (omamobile-sensors): it rotates

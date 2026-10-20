@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "omamobile.simpin",
+  "name": "SIM PIN sheet",
+  "version": "0.1.0",
+  "author": "Omarchy Mobile",
+  "license": "MIT",
+  "description": "Asks for a locked SIM's PIN after the phone is unlocked: a bottom sheet per SIM, named by its slot (\"SIM 2 (eSIM)\"), with its own keypad, sent to omamobile-sitd through omamobile-sit sim-pin --stdin.",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "SimPin.qml"
+  }
+}
