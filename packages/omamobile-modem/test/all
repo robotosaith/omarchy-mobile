@@ -112,3 +112,17 @@ assert out == [log[0], log[2], '    (repeated 4999 more times)', log[-1]], out
 assert len(cp.kernel_lines(log[2:3] * 3 + [f'[4.{i}] cpif: x{i}' for i in range(300)])) == 150
 PY
 pass "crash record folds a repeated kernel line"
+
+# The hang marker: a clean stop in the same boot removes it; a marker from
+# another boot (a hang or reset there) stays, and the start refuses
+m=$t/mark
+printf '2026-10-21T08:18:10+01:00 boot aaaa\n' > "$m"
+OMAMOBILE_MODEM_MARK_FILE=$m OMAMOBILE_BOOT_ID=aaaa bash lib/omamobile-modem-start --stopped 2>/dev/null
+[[ ! -e $m ]] || fail "a clean stop removes this boot's marker"
+printf '2026-10-21T08:18:10+01:00 boot aaaa\n' > "$m"
+OMAMOBILE_MODEM_MARK_FILE=$m OMAMOBILE_BOOT_ID=bbbb bash lib/omamobile-modem-start --stopped 2>/dev/null
+[[ -e $m ]] || fail "a marker from another boot stays"
+OMAMOBILE_MODEM_MARK_FILE=$m OMAMOBILE_BOOT_ID=bbbb bash lib/omamobile-modem-start 2>/dev/null && fail "a marker from another boot blocks the start"
+OMAMOBILE_MODEM_MARK_FILE=$t/none OMAMOBILE_BOOT_ID=aaaa bash lib/omamobile-modem-start --stopped 2>/dev/null || fail "--stopped without a marker"
+grep -qx 'ExecStopPost=/usr/lib/omamobile-vendor/omamobile-modem-start --stopped' systemd/omamobile-modem.service || fail "the unit drops the marker on a clean stop"
+pass "hang marker survives only a hang"

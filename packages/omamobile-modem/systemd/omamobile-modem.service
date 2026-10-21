@@ -16,6 +16,8 @@ ConditionPathExists=/usr/lib/omamobile-vendor/modem/root
 [Service]
 ExecStart=/usr/lib/omamobile-vendor/omamobile-modem-start
 ExecStop=/usr/lib/omamobile-vendor/omamobile-vendor-chroot modem stop
+# A clean stop before ONLINE is not a hang: drop this boot's hang marker
+ExecStopPost=/usr/lib/omamobile-vendor/omamobile-modem-start --stopped
 Restart=no
 TimeoutStartSec=5min
 TimeoutStopSec=40

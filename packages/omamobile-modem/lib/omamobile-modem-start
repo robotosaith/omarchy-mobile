@@ -10,13 +10,27 @@
 # modem until someone runs this with --retry (or removes the marker). An end
 # after ONLINE (a CP crash, about one warm start in twenty on this phone
 # while registering) leaves no marker: the next boot starts it again.
+#
+# --stopped (the unit's ExecStopPost) removes a marker this boot wrote: the
+# unit stopped cleanly before ONLINE (a stop, a failed start, a reboot), so
+# the bring-up did not hang the phone. A hang or reset never gets there.
+# Without this, a restart by hand or a kernel without the modem's drivers
+# left the marker and the next boot skipped a healthy modem.
 set -euo pipefail
 
-MARK=/var/lib/omamobile/modem-bringup-started
+MARK=${OMAMOBILE_MODEM_MARK_FILE:-/var/lib/omamobile/modem-bringup-started}
 LIB=/usr/lib/omamobile-vendor
+BOOT_ID=${OMAMOBILE_BOOT_ID:-$(cat /proc/sys/kernel/random/boot_id)}
 say() { printf 'omamobile-modem: %s\n' "$*" >&2; }
 
-if [[ ${1:-} == --retry ]]; then
+if [[ ${1:-} == --stopped ]]; then
+  if [[ -e $MARK && $(cat "$MARK") == *" boot $BOOT_ID" ]]; then
+    say "stopped before ONLINE in this boot ($(cat "$MARK")): not a hang; the next boot starts the modem"
+    rm -f "$MARK"
+    sync
+  fi
+  exit 0
+elif [[ ${1:-} == --retry ]]; then
   rm -f "$MARK"
 elif [[ -e $MARK ]]; then
   say "the last bring-up ($(cat "$MARK")) never reached ONLINE; skipping the modem (omamobile-modem-start --retry)"
@@ -43,6 +57,6 @@ echo performance > /sys/module/pcie_aspm/parameters/policy 2>/dev/null ||
 
 "$LIB/omamobile-vendor-chroot" modem check
 mkdir -p "$(dirname "$MARK")"
-printf '%s boot %s\n' "$(date -Is)" "$(cat /proc/sys/kernel/random/boot_id)" > "$MARK"
+printf '%s boot %s\n' "$(date -Is)" "$BOOT_ID" > "$MARK"
 sync
 OMAMOBILE_MODEM_MARK=$MARK exec "$LIB/omamobile-vendor-chroot" modem start
