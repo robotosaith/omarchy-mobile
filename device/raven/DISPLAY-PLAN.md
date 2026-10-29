@@ -11,6 +11,28 @@ panel's idle auto mode (down to 10 Hz on static content). Kernel branch
 `omamobile-gs101-display`.
 
 
+**2026-10-29: the reworked series boots** (derekross/linux-omarchy-mobile#116
+after review, kernel `7.3.0-rc6-omamobile-push1-g5a144ff68cc6`: the PR on
+top of #114 plus a not-for-merge USB 2 peripheral override). DECON and DSIM
+are now `"google,gs101-…", "google,gs201-…"`; gs-decon matches gs101 for its
+own data (aperture hold and the sleep VT switch, off for gs201), and
+gs-dsim-cmd binds through the gs201 fallback with no change of its own.
+Raven's `&dsi0` no longer has the `google,decon` phandle, so only gs-decon
+writes DECON's trigger mask.
+
+- One output (`card2-DSI-1`), 60 Hz at probe, 120 Hz from the shell, back to
+  60 Hz when idle.
+- Backlight 0 for 30 s with the display on: no flip timeouts (the series
+  with the phandle gave about 60 in 30 s).
+- DPMS off and on: the panel comes back.
+- s2idle by `systemctl suspend`, three cycles (14, 62 and 28 s), each woken
+  by one Power press, and that press reached the shell. Before the VT-switch
+  fix every wake took two.
+- `tools/phone-smoke`: ok but Wi-Fi, sound, sensors and the modem units,
+  which this kernel doesn't build.
+- Open: during `systemctl suspend` the panel stays lit on the lock screen
+  while the SoC sleeps; still to compare with the integration kernel.
+
 **2026-10-15: no more phantom simpledrm output** (`omamobile-gs101-display`
 `3b3915975`, kernel `g58ea90ae478d`). gs-decon evicted simpledrm from the
 boot framebuffer, but simpledrm probed about 30 ms after gs-decon registered
